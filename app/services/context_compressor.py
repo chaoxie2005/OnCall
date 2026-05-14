@@ -239,18 +239,20 @@ class ContextCompressor:
 
 
 def create_compression_middleware(compressor: ContextCompressor):
-    """创建一个适配 LangGraph create_agent 的异步中间件函数
+    """创建一个 before_model 中间件用于上下文压缩
 
-    返回的异步函数用作 before_model 中间件，
     在每次模型调用前检查并执行上下文压缩。
 
     Args:
         compressor: ContextCompressor 实例
 
     Returns:
-        异步中间件函数，签名为 (state) -> dict | None
+        AgentMiddleware 实例
     """
-    async def compression_middleware(state) -> dict | None:
+    from langchain.agents.middleware import before_model
+
+    @before_model
+    async def compression_middleware(state, runtime) -> dict | None:
         return await compressor.compress(state)
 
     return compression_middleware

@@ -79,7 +79,7 @@ uv pip install -e .
 # 方式 2: 使用 pip
 python -m venv .venv
 .venv\Scripts\activate
-pip install -e .
+pip install -e i.
 
 # 3. 编辑配置文件
 # 使用记事本或其他编辑器打开 .env 文件，填入你的 DASHSCOPE_API_KEY

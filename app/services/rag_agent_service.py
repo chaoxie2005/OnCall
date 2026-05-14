@@ -7,13 +7,14 @@
 from typing import Annotated, Any, AsyncGenerator, Dict, Sequence
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import before_model
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
     RemoveMessage,
     SystemMessage,
 )
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
 from loguru import logger
 from typing_extensions import TypedDict
@@ -37,7 +38,8 @@ class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
 
 
-def trim_messages_middleware(state: AgentState) -> dict[str, Any] | None:
+@before_model
+def trim_messages_middleware(state: AgentState, runtime) -> dict[str, Any] | None:
     """
     修剪消息历史，只保留最近的几条消息以适应上下文窗口
 
@@ -48,6 +50,7 @@ def trim_messages_middleware(state: AgentState) -> dict[str, Any] | None:
 
     Args:
         state: Agent 状态
+        runtime: 运行时上下文
 
     Returns:
         包含修剪后消息的字典，如果无需修剪则返回 None
@@ -100,8 +103,12 @@ class RagAgentService:
         # MCP 客户端（延迟初始化，使用全局管理）
         self.mcp_tools: list = []
 
-        # 创建内存检查点（用于会话管理）
-        self.checkpointer = MemorySaver()
+        # 创建 SQLite 异步持久化检查点（用于会话管理）
+        db_path = config.checkpoint_db_path
+        import os
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        self._db_path = db_path
+        self.checkpointer: AsyncSqliteSaver | None = None
 
         # 创建用于摘要的独立模型实例（非流式，低温度）
         self._summary_model = ChatQwen(
@@ -130,25 +137,31 @@ class RagAgentService:
         if self._agent_initialized:
             return
 
-        # 使用全局 MCP 客户端管理器（带重试拦截器）
-        mcp_client = await get_mcp_client_with_retry()
+        # 初始化异步 checkpointer
+        if self.checkpointer is None:
+            import aiosqlite
+            conn = await aiosqlite.connect(self._db_path)
+            self.checkpointer = AsyncSqliteSaver(conn)
+            self.checkpointer.setup()
 
-        # 获取 MCP 工具
-        mcp_tools = await mcp_client.get_tools()
-        logger.info(f"成功加载 {len(mcp_tools)} 个 MCP 工具")
+        all_tools = list(self.tools)
 
-        # 将 MCP 工具添加到实例变量中
-        self.mcp_tools = mcp_tools
-
-        # 合并所有工具
-        all_tools = self.tools + self.mcp_tools
+        # 尝试加载 MCP 工具（如果 MCP 服务不可用，会降级使用基础工具）
+        try:
+            mcp_client = await get_mcp_client_with_retry()
+            mcp_tools = await mcp_client.get_tools()
+            logger.info(f"成功加载 {len(mcp_tools)} 个 MCP 工具")
+            self.mcp_tools = mcp_tools
+            all_tools.extend(mcp_tools)
+        except Exception as e:
+            logger.warning(f"MCP 工具加载失败，使用基础工具继续运行: {e}")
+            self.mcp_tools = []
 
         # 构建中间件列表：压缩中间件（可选）+ 消息修剪（兜底）
         middleware_list = []
         if config.context_compression_enabled:
             middleware_list.append(create_compression_middleware(self.compressor))
             logger.info("上下文压缩中间件已启用")
-        # 保留原有的消息修剪作为最后的安全兜底
         middleware_list.append(trim_messages_middleware)
 
         self.agent = create_agent(
@@ -159,7 +172,6 @@ class RagAgentService:
         )
 
         self._agent_initialized = True
-
 
         if all_tools:
             tool_names = [tool.name if hasattr(tool, "name") else str(tool) for tool in all_tools]
@@ -295,6 +307,8 @@ class RagAgentService:
                 }
             }
 
+            full_response = ""
+
             async for token, metadata in self.agent.astream(
                 input=agent_input,
                 config=config_dict,
@@ -304,21 +318,47 @@ class RagAgentService:
                 message_type = type(token).__name__
 
                 if message_type in ("AIMessage", "AIMessageChunk"):
-                    content_blocks = getattr(token, 'content_blocks', None)
+                    text_yielded = False
 
+                    # 方式1：解析 content_blocks（思考/推理模型使用此格式）
+                    content_blocks = getattr(token, 'content_blocks', None)
                     if content_blocks and isinstance(content_blocks, list):
                         for block in content_blocks:
                             if isinstance(block, dict) and block.get('type') == 'text':
                                 text_content = block.get('text', '')
                                 if text_content:
+                                    full_response += text_content
                                     yield {
                                         "type": "content",
                                         "data": text_content,
                                         "node": node_name
                                     }
+                                    text_yielded = True
+
+                    # 方式2：解析 content 属性（常规模型使用此格式）
+                    if not text_yielded:
+                        content = getattr(token, 'content', '')
+                        if isinstance(content, str) and content:
+                            full_response += content
+                            yield {
+                                "type": "content",
+                                "data": content,
+                                "node": node_name
+                            }
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get('type') == 'text':
+                                    text = block.get('text', '')
+                                    if text:
+                                        full_response += text
+                                        yield {
+                                            "type": "content",
+                                            "data": text,
+                                            "node": node_name
+                                        }
 
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
-            yield {"type": "complete"}
+            yield {"type": "complete", "data": {"answer": full_response}}
 
         except Exception as e:
             logger.error(f"[会话 {session_id}] RAG Agent 查询失败（流式）: {e}")
@@ -326,9 +366,8 @@ class RagAgentService:
                 "type": "error",
                 "data": str(e)
             }
-            raise
 
-    def get_session_history(self, session_id: str) -> list:
+    async def get_session_history(self, session_id: str) -> list:
         """
         获取会话历史（从 MemorySaver checkpointer 中读取）
 
@@ -339,11 +378,11 @@ class RagAgentService:
             list: 消息历史列表 [{"role": "user|assistant", "content": "...", "timestamp": "..."}]
         """
         try:
-            # 使用 checkpointer 的 get 方法获取最新的检查点
+            # 使用 checkpointer 的 aget_tuple 方法获取最新的检查点
             config = {"configurable": {"thread_id": session_id}}
-            
+
             # 获取该 thread 的最新检查点
-            checkpoint_tuple = self.checkpointer.get(config)
+            checkpoint_tuple = await self.checkpointer.aget_tuple(config)
             
             if not checkpoint_tuple:
                 logger.info(f"获取会话历史: {session_id}, 消息数量: 0")
@@ -393,7 +432,7 @@ class RagAgentService:
             logger.error(f"获取会话历史失败: {session_id}, 错误: {e}")
             return []
 
-    def clear_session(self, session_id: str) -> bool:
+    async def clear_session(self, session_id: str) -> bool:
         """
         清空会话历史（从 MemorySaver checkpointer 中删除）
 
@@ -404,12 +443,10 @@ class RagAgentService:
             bool: 是否成功
         """
         try:
-            # 使用 checkpointer 的 delete_thread 方法删除该 thread 的所有检查点
-            self.checkpointer.delete_thread(session_id)
-            
+            await self.checkpointer.adelete_thread(session_id)
             logger.info(f"已清除会话历史: {session_id}")
             return True
-            
+
         except Exception as e:
             logger.error(f"清空会话历史失败: {session_id}, 错误: {e}")
             return False

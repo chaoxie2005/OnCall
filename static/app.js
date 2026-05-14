@@ -8,13 +8,75 @@ class SuperBizAgentApp {
         this.currentChatHistory = []; // 当前对话的消息历史
         this.chatHistories = this.loadChatHistories(); // 所有历史对话
         this.isCurrentChatFromHistory = false; // 标记当前对话是否是从历史记录加载的
-        
+        this.dropCounter = 0; // 拖拽计数器，防止子元素触发 dragleave
+
+        this.initTheme();
         this.initializeElements();
         this.bindEvents();
         this.updateUI();
         this.initMarkdown();
         this.checkAndSetCentered();
         this.renderChatHistory();
+    }
+
+    // 初始化主题
+    initTheme() {
+        // 优先读取 localStorage，其次系统偏好
+        const saved = localStorage.getItem('theme');
+        if (saved) {
+            this.theme = saved;
+        } else {
+            this.theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        this.applyTheme();
+        this.createThemeToggle();
+    }
+
+    applyTheme() {
+        document.documentElement.setAttribute('data-theme', this.theme);
+    }
+
+    createThemeToggle() {
+        const header = document.querySelector('.sidebar-header');
+        if (!header) return;
+
+        const btn = document.createElement('button');
+        btn.className = 'theme-toggle-btn';
+        btn.title = this.theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式';
+        btn.innerHTML = this.theme === 'dark'
+            ? '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+        btn.addEventListener('click', () => this.toggleTheme());
+        header.appendChild(btn);
+        this.themeToggleBtn = btn;
+    }
+
+    toggleTheme() {
+        this.theme = this.theme === 'dark' ? 'light' : 'dark';
+        this.applyTheme();
+        localStorage.setItem('theme', this.theme);
+
+        if (this.themeToggleBtn) {
+            this.themeToggleBtn.title = this.theme === 'dark' ? '切换到亮色模式' : '切换到暗色模式';
+            this.themeToggleBtn.innerHTML = this.theme === 'dark'
+                ? '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+                : '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        }
+
+        // 更新 highlight.js 主题
+        this.switchHighlightTheme();
+    }
+
+    switchHighlightTheme() {
+        const link = document.querySelector('link[href*="highlight.js"]');
+        if (link) {
+            if (this.theme === 'dark') {
+                link.href = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css';
+            } else {
+                link.href = 'https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css';
+            }
+        }
     }
 
     // 初始化Markdown配置
@@ -165,11 +227,17 @@ class SuperBizAgentApp {
         }
         
         if (this.messageInput) {
-            this.messageInput.addEventListener('keypress', (e) => {
+            // Enter 发送，Shift+Enter 换行
+            this.messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     this.sendMessage();
                 }
+            });
+
+            // 自动调整高度
+            this.messageInput.addEventListener('input', () => {
+                this.autoResizeTextarea();
             });
         }
         
@@ -202,6 +270,67 @@ class SuperBizAgentApp {
         
         if (this.fileInput) {
             this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
+
+        // 拖拽上传
+        this.setupDragAndDrop();
+    }
+
+    // 设置拖拽上传
+    setupDragAndDrop() {
+        const dropTarget = document.querySelector('.main-content');
+        if (!dropTarget) return;
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropTarget.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            });
+        });
+
+        dropTarget.addEventListener('dragenter', () => {
+            this.dropCounter++;
+            if (this.dropCounter === 1) {
+                this.showDropOverlay(true);
+            }
+        });
+
+        dropTarget.addEventListener('dragleave', () => {
+            this.dropCounter--;
+            if (this.dropCounter === 0) {
+                this.showDropOverlay(false);
+            }
+        });
+
+        dropTarget.addEventListener('drop', (e) => {
+            this.dropCounter = 0;
+            this.showDropOverlay(false);
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                const file = files[0];
+                if (!this.validateFileType(file)) {
+                    this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx)、PPT (.pptx) 格式的文件', 'error');
+                    return;
+                }
+                if (file.size > 50 * 1024 * 1024) {
+                    this.showNotification('文件大小不能超过50MB', 'error');
+                    return;
+                }
+                this.uploadFile(file);
+            }
+        });
+    }
+
+    // 显示/隐藏拖拽遮罩层
+    showDropOverlay(show) {
+        const overlay = document.getElementById('dropOverlay');
+        if (overlay) {
+            if (show) {
+                overlay.classList.add('active');
+            } else {
+                overlay.classList.remove('active');
+            }
         }
     }
 
@@ -247,14 +376,15 @@ class SuperBizAgentApp {
         // 停止所有进行中的操作
         this.isStreaming = false;
         
-        // 清空输入框
+        // 清空输入框并重置高度
         if (this.messageInput) {
             this.messageInput.value = '';
+            this.messageInput.style.height = 'auto';
         }
-        
+
         // 清空当前对话历史
         this.currentChatHistory = [];
-        
+
         // 重置标记
         this.isCurrentChatFromHistory = false;
         
@@ -388,6 +518,9 @@ class SuperBizAgentApp {
         this.chatHistories.forEach((history, index) => {
             const historyItem = document.createElement('div');
             historyItem.className = 'history-item';
+            if (history.id === this.sessionId && this.currentChatHistory.length > 0) {
+                historyItem.classList.add('active');
+            }
             historyItem.dataset.historyId = history.id;
             
             historyItem.innerHTML = `
@@ -645,9 +778,10 @@ class SuperBizAgentApp {
         // 显示用户消息
         this.addMessage('user', message);
         
-        // 清空输入框
+        // 清空输入框并重置高度
         if (this.messageInput) {
             this.messageInput.value = '';
+            this.messageInput.style.height = 'auto';
         }
 
         // 设置发送状态
@@ -1011,6 +1145,13 @@ class SuperBizAgentApp {
         }
     }
 
+    // Textarea 自适应高度
+    autoResizeTextarea() {
+        if (!this.messageInput) return;
+        this.messageInput.style.height = 'auto';
+        this.messageInput.style.height = Math.min(this.messageInput.scrollHeight, 200) + 'px';
+    }
+
     // 滚动到底部
     scrollToBottom() {
         if (this.chatMessages) {
@@ -1092,7 +1233,7 @@ class SuperBizAgentApp {
         if (file) {
             // 验证文件格式
             if (!this.validateFileType(file)) {
-                this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx) 格式的文件', 'error');
+                this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx)、PPT (.pptx) 格式的文件', 'error');
                 this.fileInput.value = '';
                 return;
             }
@@ -1103,66 +1244,127 @@ class SuperBizAgentApp {
     // 验证文件类型
     validateFileType(file) {
         const fileName = file.name.toLowerCase();
-        const allowedExtensions = ['.txt', '.md', '.markdown', '.pdf', '.docx'];
+        const allowedExtensions = ['.txt', '.md', '.markdown', '.pdf', '.docx', '.pptx'];
         return allowedExtensions.some(ext => fileName.endsWith(ext));
     }
 
-    // 上传文件到知识库
-    async uploadFile(file) {
-        // 再次验证文件类型（双重保险）
+    // 上传文件到知识库（使用 XHR 实现进度条）
+    uploadFile(file) {
         if (!this.validateFileType(file)) {
-            this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx) 格式的文件', 'error');
+            this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx)、PPT (.pptx) 格式的文件', 'error');
             return;
         }
 
-        // 验证文件大小（限制为50MB）
         const maxSize = 50 * 1024 * 1024;
         if (file.size > maxSize) {
             this.showNotification('文件大小不能超过50MB', 'error');
             return;
         }
 
-        // 锁定前端并显示上传遮罩层
         this.isStreaming = true;
         this.updateUI();
-        this.showUploadOverlay(true, file.name);
 
-        try {
-            // 创建 FormData
-            const formData = new FormData();
-            formData.append('file', file);
+        // 创建进度消息元素
+        const progressEl = this.addUploadProgressMessage(file.name);
 
-            // 发送上传请求
-            const response = await fetch(`${this.apiBaseUrl}/upload`, {
-                method: 'POST',
-                body: formData
-            });
+        const formData = new FormData();
+        formData.append('file', file);
 
-            if (!response.ok) {
-                throw new Error(`HTTP错误: ${response.status}`);
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                const percent = Math.round((e.loaded / e.total) * 100);
+                this.updateUploadProgress(progressEl, percent);
             }
+        });
 
-            const data = await response.json();
-
-            if ((data.code === 200 || data.message === 'success') && data.data) {
-                // 在聊天界面显示上传成功消息
-                const successMessage = `${file.name} 上传到知识库成功`;
-                this.addMessage('assistant', successMessage, false, true);
+        xhr.addEventListener('load', () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if ((data.code === 200 || data.message === 'success') && data.data) {
+                        this.updateUploadProgress(progressEl, 100, 'success', `${file.name} 上传到知识库成功`);
+                        this.addMessage('assistant', `${file.name} 上传到知识库成功`, false, true);
+                    } else {
+                        this.updateUploadProgress(progressEl, 100, 'error', data.message || '上传失败');
+                    }
+                } catch (e) {
+                    this.updateUploadProgress(progressEl, 100, 'success', `${file.name} 上传完成`);
+                    this.addMessage('assistant', `${file.name} 上传到知识库成功`, false, true);
+                }
             } else {
-                throw new Error(data.message || '上传失败');
+                this.updateUploadProgress(progressEl, 0, 'error', `上传失败: HTTP ${xhr.status}`);
             }
-        } catch (error) {
-            console.error('文件上传失败:', error);
-            this.showNotification('文件上传失败: ' + error.message, 'error');
-        } finally {
-            // 清空文件输入
-            if (this.fileInput) {
-                this.fileInput.value = '';
+
+            this.finishUpload();
+        });
+
+        xhr.addEventListener('error', () => {
+            this.updateUploadProgress(progressEl, 0, 'error', '网络错误，上传失败');
+            this.finishUpload();
+        });
+
+        xhr.open('POST', `${this.apiBaseUrl}/upload`);
+        xhr.send(formData);
+    }
+
+    finishUpload() {
+        if (this.fileInput) {
+            this.fileInput.value = '';
+        }
+        this.isStreaming = false;
+        this.updateUI();
+    }
+
+    // 创建上传进度消息
+    addUploadProgressMessage(filename) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'upload-progress-message';
+        wrapper.innerHTML = `
+            <div class="upload-progress-container">
+                <div class="upload-progress-header">
+                    <span class="upload-progress-filename">${this.escapeHtml(filename)}</span>
+                    <span class="upload-progress-percent">0%</span>
+                </div>
+                <div class="upload-progress-bar">
+                    <div class="upload-progress-fill" style="width: 0%"></div>
+                </div>
+                <div class="upload-progress-status">正在上传...</div>
+            </div>
+        `;
+
+        if (this.chatMessages) {
+            // 检查是否为第一条内容（移除居中状态）
+            const isFirst = this.chatMessages.querySelectorAll('.message, .upload-progress-message').length === 0;
+            this.chatMessages.appendChild(wrapper);
+            if (isFirst && this.chatContainer) {
+                this.chatContainer.classList.remove('centered');
             }
-            // 解锁前端
-            this.isStreaming = false;
-            this.showUploadOverlay(false);
-            this.updateUI();
+            this.scrollToBottom();
+        }
+
+        return wrapper;
+    }
+
+    // 更新上传进度
+    updateUploadProgress(element, percent, status, statusText) {
+        if (!element) return;
+
+        const percentEl = element.querySelector('.upload-progress-percent');
+        const fillEl = element.querySelector('.upload-progress-fill');
+        const statusEl = element.querySelector('.upload-progress-status');
+
+        if (percentEl) percentEl.textContent = percent + '%';
+        if (fillEl) fillEl.style.width = percent + '%';
+        if (statusEl && statusText) statusEl.textContent = statusText;
+
+        if (status === 'success') {
+            element.classList.add('success');
+            element.classList.remove('error');
+        } else if (status === 'error') {
+            element.classList.add('error');
+            element.classList.remove('success');
         }
     }
 
@@ -1657,33 +1859,6 @@ class SuperBizAgentApp {
         }
     }
 }
-
-// 添加CSS动画
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideIn {
-        from {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-        to {
-            transform: translateX(0);
-            opacity: 1;
-        }
-    }
-    
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(100%);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);
 
 // 初始化应用
 document.addEventListener('DOMContentLoaded', () => {

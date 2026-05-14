@@ -5,7 +5,8 @@
 
 from typing import AsyncGenerator, Dict, Any
 from langgraph.graph import StateGraph, END
-from langgraph.checkpoint.memory import MemorySaver
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
 from loguru import logger
 
 from app.agent.aiops import PlanExecuteState, planner, executor, replanner
@@ -22,7 +23,13 @@ class AIOpsService:
 
     def __init__(self):
         """初始化服务"""
-        self.checkpointer = MemorySaver()
+        import os
+        from app.config import config
+        db_path = config.checkpoint_db_path
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        self.checkpointer = SqliteSaver(conn)
+        self.checkpointer.setup()
         self.graph = self._build_graph()
         logger.info("Plan-Execute-Replan Service 初始化完成")
 

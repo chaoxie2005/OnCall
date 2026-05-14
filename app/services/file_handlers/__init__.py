@@ -6,6 +6,7 @@ from app.services.file_handlers.text_handler import TextHandler
 from app.services.file_handlers.markdown_handler import MarkdownHandler
 from app.services.file_handlers.pdf_handler import PDFHandler
 from app.services.file_handlers.word_handler import WordHandler
+from app.services.file_handlers.pptx_handler import PptxHandler
 
 __all__ = [
     "BaseFileHandler",
@@ -15,4 +16,5 @@ __all__ = [
     "MarkdownHandler",
     "PDFHandler",
     "WordHandler",
+    "PptxHandler",
 ]

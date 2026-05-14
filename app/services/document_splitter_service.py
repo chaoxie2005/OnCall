@@ -1,7 +1,7 @@
 """文档分割服务模块 - 基于 LangChain 的多格式文档智能分割
 
 根据上传文件类型自动匹配到对应的文件处理器进行分片操作。
-支持的文件类型：md, txt, pdf, docx
+支持的文件类型：md, txt, pdf, docx, pptx
 
 各类型分片策略详见 app/services/file_handlers/ 下对应的处理器文件。
 """
@@ -16,6 +16,7 @@ from app.services.file_handlers import (
     FileHandlerRegistry,
     MarkdownHandler,
     PDFHandler,
+    PptxHandler,
     TextHandler,
     WordHandler,
 )
@@ -28,6 +29,7 @@ def _build_default_registry() -> FileHandlerRegistry:
     registry.register(TextHandler())
     registry.register(PDFHandler())
     registry.register(WordHandler())
+    registry.register(PptxHandler())
     return registry
 
 

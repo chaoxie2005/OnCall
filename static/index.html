@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,6 +50,16 @@
                 <span>AI Ops</span>
             </button>
             <div class="chat-container">
+                <div class="drop-overlay" id="dropOverlay">
+                    <div class="drop-overlay-content">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M12 16V4M12 4L8 8M12 4L16 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M4 16V18C4 19.1046 4.89543 20 6 20H18C19.1046 20 20 19.1046 20 18V16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        </svg>
+                        <span class="drop-overlay-text">释放文件以上传到知识库</span>
+                        <span class="drop-overlay-subtext">支持 TXT / Markdown / PDF / Word</span>
+                    </div>
+                </div>
                 <div class="welcome-greeting" id="welcomeGreeting">
                     <p>你好！我是智能Oncall小助手</p>
                 </div>
@@ -59,7 +69,7 @@
                 <div class="chat-input-container">
                     <div class="input-group-wrapper">
                         <div class="input-wrapper">
-                            <input type="text" id="messageInput" placeholder="问问智能OnCall助手" maxlength="1000" class="message-input">
+                            <textarea id="messageInput" placeholder="问问智能OnCall助手" maxlength="1000" class="message-input" rows="1"></textarea>
                             <div class="input-bottom-bar">
                                 <div class="tools-btn-wrapper">
                                     <button class="tools-btn" id="toolsBtn" title="更多选项">
@@ -112,7 +122,7 @@
                             </div>
                         </div>
                     </div>
-                    <input type="file" id="fileInput" accept=".txt,.md,.markdown" style="display: none;">
+                    <input type="file" id="fileInput" accept=".txt,.md,.markdown,.pdf,.docx,.pptx" style="display: none;">
                 </div>
             </div>
         </main>

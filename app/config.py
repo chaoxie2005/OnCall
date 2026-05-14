@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     context_compression_keep_recent: int = 6  # 压缩后保留最近消息数（3轮对话）
     context_compression_model_window: int = 32768  # qwen-max 上下文窗口
 
+    # 会话持久化配置（SQLite）
+    checkpoint_db_path: str = "data/oncall_sessions.db"
+
     # MCP 服务配置
     mcp_cls_transport: str = "streamable-http"
     mcp_cls_url: str = "http://localhost:8003/mcp"
