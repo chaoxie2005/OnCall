@@ -26,7 +26,7 @@ class AIOpsService:
         self.graph = self._build_graph()
         logger.info("Plan-Execute-Replan Service 初始化完成")
 
-    def _build_graph(self):
+    def _build_graph(self): # 核心方法
         """构建 Plan-Execute-Replan 工作流"""
         logger.info("构建工作流图...")
 
@@ -78,13 +78,13 @@ class AIOpsService:
         logger.info("工作流图构建完成")
         return compiled_graph
 
-    async def execute(
+    async def execute( # 通用任务执行接口
         self,
         user_input: str,
         session_id: str = "default"
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
-        执行 Plan-Execute-Replan 流程
+        执行 Plan-Execute-Replan 流程，并实时返回执行状态和结果
 
         Args:
             user_input: 用户的任务描述
@@ -156,7 +156,7 @@ class AIOpsService:
                 "message": f"任务执行出错: {str(e)}"
             }
 
-    async def diagnose(
+    async def diagnose( # 专用于故障诊断的接口，使用固定的任务描述
         self,
         session_id: str = "default"
     ) -> AsyncGenerator[Dict[str, Any], None]:

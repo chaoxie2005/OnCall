@@ -39,8 +39,8 @@ def trim_messages_middleware(state: AgentState) -> dict[str, Any] | None:
 
     策略：
     - 保留第一条系统消息（System Message）
-    - 保留最近的 6 条消息（3 轮对话）
-    - 当消息少于等于 7 条时，不做修剪
+    - 保留最近的 20 条消息（10 轮对话）
+    - 当消息少于等于 21 条时，不做修剪
 
     Args:
         state: Agent 状态
@@ -48,19 +48,15 @@ def trim_messages_middleware(state: AgentState) -> dict[str, Any] | None:
     Returns:
         包含修剪后消息的字典，如果无需修剪则返回 None
     """
+    max_keep = 20
     messages = state["messages"]
 
-    # 如果消息数量较少，无需修剪
-    if len(messages) <= 7:
+    if len(messages) <= max_keep + 1:
         return None
 
-    # 提取第一条系统消息
     first_msg = messages[0]
+    recent_messages = messages[-max_keep:] if len(messages) % 2 == 0 else messages[-(max_keep + 1):]
 
-    # 保留最近的 6 条消息（确保包含完整的对话轮次）
-    recent_messages = messages[-6:] if len(messages) % 2 == 0 else messages[-7:]
-
-    # 构建新的消息列表
     new_messages = [first_msg] + list(recent_messages)
 
     logger.debug(f"修剪消息历史: {len(messages)} -> {len(new_messages)} 条")
@@ -131,6 +127,7 @@ class RagAgentService:
             self.model,
             tools=all_tools,
             checkpointer=self.checkpointer,
+            middleware=[trim_messages_middleware],
         )
 
         self._agent_initialized = True

@@ -35,9 +35,14 @@ class Settings(BaseSettings):
     milvus_timeout: int = 10000  # 毫秒
 
     # RAG 配置
-    rag_top_k: int = 3
-    rag_score_threshold: float = 0.8
+    rag_top_k: int = 10
+    rag_score_threshold: float = 0.5
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
+
+    # Rerank 配置
+    rerank_enabled: bool = True
+    rerank_model: str = "qwen3-rerank"
+    rerank_top_n: int = 3
 
     # 文档分块配置
     chunk_max_size: int = 800
