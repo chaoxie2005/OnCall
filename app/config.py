@@ -57,11 +57,25 @@ class Settings(BaseSettings):
     # 会话持久化配置（SQLite）
     checkpoint_db_path: str = "data/oncall_sessions.db"
 
+    # 速率限制配置
+    rate_limit_enabled: bool = True
+    rate_limit_chat: str = "10/minute"
+    rate_limit_chat_stream: str = "5/minute"
+    rate_limit_aiops: str = "3/minute"
+    rate_limit_upload: str = "20/minute"
+    rate_limit_storage_uri: str = "memory://"
+    rate_limit_headers_enabled: bool = True
+
     # MCP 服务配置
     mcp_cls_transport: str = "streamable-http"
     mcp_cls_url: str = "http://localhost:8003/mcp"
     mcp_monitor_transport: str = "streamable-http"
     mcp_monitor_url: str = "http://localhost:8004/mcp"
+
+    # Prometheus 配置
+    prometheus_base_url: str = "http://localhost:9090"
+    prometheus_timeout: int = 10
+    prometheus_alert_states: list[str] = []  # 过滤告警状态，空列表=不过滤；示例：["firing"]
 
     @property
     def mcp_servers(self) -> Dict[str, Dict[str, Any]]:

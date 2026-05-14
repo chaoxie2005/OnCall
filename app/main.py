@@ -14,6 +14,8 @@ from app.config import config
 from loguru import logger
 from app.api import chat, health, file, aiops
 from app.core.milvus_client import milvus_manager
+from app.core.rate_limiter import limiter
+from slowapi.errors import RateLimitExceeded
 
 
 @asynccontextmanager
@@ -48,6 +50,26 @@ app = FastAPI(
     description="基于 LangChain 的智能oncall运维系统",
     lifespan=lifespan
 )
+
+# 注册速率限制器到 app 状态（slowapi 中间件依赖）
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rate_limit_handler(request, exc):
+    """速率限制触发时的响应"""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=429,
+        content={
+            "code": 429,
+            "message": "请求过于频繁，请稍后重试",
+            "data": {
+                "retry_after_seconds": exc.retry_after if hasattr(exc, "retry_after") else 60,
+            },
+        },
+    )
+
 
 # 配置 CORS
 app.add_middleware(

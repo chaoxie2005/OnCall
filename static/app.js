@@ -1,7 +1,16 @@
 // SuperBizAgent 前端应用
 class SuperBizAgentApp {
+    // 常量
+    static MAX_FILE_SIZE = 50 * 1024 * 1024;       // 50MB
+    static MAX_INPUT_LENGTH = 1000;
+    static MAX_HISTORY_COUNT = 50;
+    static ALLOWED_EXTENSIONS = ['.txt', '.md', '.markdown', '.pdf', '.docx', '.pptx'];
+    static API_BASE_URL = 'http://localhost:9900/api';
+    static NOTIFICATION_DURATION = 3000;
+
     constructor() {
-        this.apiBaseUrl = 'http://localhost:9900/api';
+        this.debug = false;
+        this.apiBaseUrl = SuperBizAgentApp.API_BASE_URL;
         this.currentMode = 'quick'; // 'quick' 或 'stream'
         this.sessionId = this.generateSessionId();
         this.isStreaming = false;
@@ -9,6 +18,7 @@ class SuperBizAgentApp {
         this.chatHistories = this.loadChatHistories(); // 所有历史对话
         this.isCurrentChatFromHistory = false; // 标记当前对话是否是从历史记录加载的
         this.dropCounter = 0; // 拖拽计数器，防止子元素触发 dragleave
+        this.abortController = null; // 用于中断 fetch 请求
 
         this.initTheme();
         this.initializeElements();
@@ -18,6 +28,9 @@ class SuperBizAgentApp {
         this.checkAndSetCentered();
         this.renderChatHistory();
     }
+
+    log(...args) { if (this.debug) this.log(...args); }
+    warn(...args) { if (this.debug) this.warn(...args); }
 
     // 初始化主题
     initTheme() {
@@ -108,7 +121,7 @@ class SuperBizAgentApp {
                             }
                         });
                     }
-                    console.log('Markdown 渲染库初始化成功');
+                    this.log('Markdown 渲染库初始化成功');
                 } catch (e) {
                     console.error('Markdown 配置失败:', e);
                 }
@@ -126,7 +139,7 @@ class SuperBizAgentApp {
         
         // 检查 marked 是否可用
         if (typeof marked === 'undefined') {
-            console.warn('marked 库未加载，使用纯文本显示');
+            this.warn('marked 库未加载，使用纯文本显示');
             return this.escapeHtml(content);
         }
         
@@ -152,6 +165,36 @@ class SuperBizAgentApp {
                 console.error('代码高亮失败:', e);
             }
         }
+        this.addCodeBlockButtons(container);
+    }
+
+    // 给代码块添加复制按钮
+    addCodeBlockButtons(container) {
+        if (!container) return;
+        container.querySelectorAll('pre').forEach((pre) => {
+            if (pre.querySelector('.copy-code-btn')) return;
+            const btn = document.createElement('button');
+            btn.className = 'copy-code-btn';
+            btn.title = '复制代码';
+            btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4C2.89543 15 2 14.1046 2 13V4C2 2.89543 2.89543 2 4 2H13C14.1046 2 15 2.89543 15 4V5" stroke="currentColor" stroke-width="2"/></svg>';
+            btn.addEventListener('click', async () => {
+                const code = pre.querySelector('code');
+                const text = code ? code.textContent : pre.textContent;
+                try {
+                    await navigator.clipboard.writeText(text);
+                    btn.classList.add('copied');
+                    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" width="16" height="16"><path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+                    setTimeout(() => {
+                        btn.classList.remove('copied');
+                        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" width="16" height="16"><rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M5 15H4C2.89543 15 2 14.1046 2 13V4C2 2.89543 2.89543 2 4 2H13C14.1046 2 15 2.89543 15 4V5" stroke="currentColor" stroke-width="2"/></svg>';
+                    }, 2000);
+                } catch {
+                    this.showNotification('复制失败', 'error');
+                }
+            });
+            pre.style.position = 'relative';
+            pre.appendChild(btn);
+        });
     }
 
     // 初始化DOM元素
@@ -160,6 +203,15 @@ class SuperBizAgentApp {
         this.sidebar = document.querySelector('.sidebar');
         this.newChatBtn = document.getElementById('newChatBtn');
         this.aiOpsSidebarBtn = document.getElementById('aiOpsSidebarBtn');
+        this.hamburgerBtn = document.getElementById('hamburgerBtn');
+
+        // 移动端侧边栏遮罩
+        this.sidebarOverlay = document.querySelector('.sidebar-overlay');
+        if (!this.sidebarOverlay) {
+            this.sidebarOverlay = document.createElement('div');
+            this.sidebarOverlay.className = 'sidebar-overlay';
+            document.body.appendChild(this.sidebarOverlay);
+        }
         
         // 输入区域元素
         this.messageInput = document.getElementById('messageInput');
@@ -185,9 +237,14 @@ class SuperBizAgentApp {
 
     // 绑定事件监听器
     bindEvents() {
+        // 汉堡菜单按钮
+        if (this.hamburgerBtn) {
+            this.hamburgerBtn.addEventListener('click', () => this.toggleSidebar());
+        }
+
         // 新建对话
         if (this.newChatBtn) {
-            this.newChatBtn.addEventListener('click', () => this.newChat());
+            this.newChatBtn.addEventListener('click', () => { this.newChat(); this.closeSidebar(); });
         }
         
         // AI Ops按钮
@@ -221,9 +278,15 @@ class SuperBizAgentApp {
             }
         });
         
-        // 发送消息
+        // 发送消息 / 停止生成
         if (this.sendButton) {
-            this.sendButton.addEventListener('click', () => this.sendMessage());
+            this.sendButton.addEventListener('click', () => {
+                if (this.isStreaming) {
+                    this.cancelStreaming();
+                } else {
+                    this.sendMessage();
+                }
+            });
         }
         
         if (this.messageInput) {
@@ -313,7 +376,7 @@ class SuperBizAgentApp {
                     this.showNotification('仅支持 TXT、Markdown、PDF、Word (.docx)、PPT (.pptx) 格式的文件', 'error');
                     return;
                 }
-                if (file.size > 50 * 1024 * 1024) {
+                if (file.size > SuperBizAgentApp.MAX_FILE_SIZE) {
                     this.showNotification('文件大小不能超过50MB', 'error');
                     return;
                 }
@@ -352,6 +415,20 @@ class SuperBizAgentApp {
                 wrapper.classList.remove('active');
             }
         }
+    }
+
+    // 切换侧边栏（移动端）
+    toggleSidebar() {
+        const isOpen = this.sidebar.classList.toggle('open');
+        this.sidebarOverlay.classList.toggle('active', isOpen);
+        if (isOpen) {
+            this.sidebarOverlay.addEventListener('click', () => this.closeSidebar(), { once: true });
+        }
+    }
+
+    closeSidebar() {
+        this.sidebar.classList.remove('open');
+        this.sidebarOverlay.classList.remove('active');
     }
 
     // 新建对话
@@ -410,8 +487,10 @@ class SuperBizAgentApp {
         
         // 更新历史对话列表
         this.renderChatHistory();
+
+        if (this.messageInput) this.messageInput.focus();
     }
-    
+
     // 保存当前对话到历史记录（新建）
     saveCurrentChat() {
         if (this.currentChatHistory.length === 0) {
@@ -443,9 +522,9 @@ class SuperBizAgentApp {
         // 添加到历史记录列表的开头
         this.chatHistories.unshift(chatHistory);
         
-        // 限制历史记录数量（最多保存50条）
-        if (this.chatHistories.length > 50) {
-            this.chatHistories = this.chatHistories.slice(0, 50);
+        // 限制历史记录数量
+        if (this.chatHistories.length > SuperBizAgentApp.MAX_HISTORY_COUNT) {
+            this.chatHistories = this.chatHistories.slice(0, SuperBizAgentApp.MAX_HISTORY_COUNT);
         }
         
         // 保存到localStorage
@@ -538,14 +617,18 @@ class SuperBizAgentApp {
             historyItem.addEventListener('click', (e) => {
                 if (!e.target.closest('.history-item-delete')) {
                     this.loadChatHistory(history.id);
+                    this.closeSidebar();
                 }
             });
             
             // 删除历史对话
             const deleteBtn = historyItem.querySelector('.history-item-delete');
-            deleteBtn.addEventListener('click', (e) => {
+            deleteBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
-                this.deleteChatHistory(history.id);
+                const confirmed = await this.showConfirm(`确定要删除对话「${history.title}」吗？此操作不可撤销。`);
+                if (confirmed) {
+                    this.deleteChatHistory(history.id);
+                }
             });
             
             this.chatHistoryList.appendChild(historyItem);
@@ -603,7 +686,7 @@ class SuperBizAgentApp {
                 }
             } else {
                 // 如果后端请求失败，使用localStorage的历史记录
-                console.warn('从后端加载历史失败，使用本地缓存');
+                this.warn('从后端加载历史失败，使用本地缓存');
                 this.sessionId = history.id;
                 this.currentChatHistory = [...history.messages];
                 this.isCurrentChatFromHistory = true;
@@ -743,7 +826,15 @@ class SuperBizAgentApp {
         
         // 更新发送按钮状态
         if (this.sendButton) {
-            this.sendButton.disabled = this.isStreaming;
+            if (this.isStreaming) {
+                this.sendButton.disabled = false;
+                this.sendButton.classList.add('stop-btn');
+                this.sendButton.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>';
+            } else {
+                this.sendButton.disabled = false;
+                this.sendButton.classList.remove('stop-btn');
+                this.sendButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            }
         }
         
         // 更新输入框状态
@@ -755,7 +846,19 @@ class SuperBizAgentApp {
 
     // 生成随机会话ID
     generateSessionId() {
-        return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        return 'session_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+    }
+
+    // 取消当前的流式请求
+    cancelStreaming() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+        }
+        this.isStreaming = false;
+        this.updateUI();
+        if (this.messageInput) this.messageInput.focus();
+        this.showNotification('已停止生成', 'info');
     }
 
     // 发送消息
@@ -795,12 +898,14 @@ class SuperBizAgentApp {
                 await this.sendStreamMessage(message);
             }
         } catch (error) {
+            if (error.name === 'AbortError') return;
             console.error('发送消息失败:', error);
             this.addMessage('assistant', '抱歉，发送消息时出现错误：' + error.message);
         } finally {
             this.isStreaming = false;
             this.updateUI();
-            
+            if (this.messageInput) this.messageInput.focus();
+
             // 如果当前对话是从历史记录加载的，更新历史记录
             if (this.isCurrentChatFromHistory && this.currentChatHistory.length > 0) {
                 this.updateCurrentChatHistory();
@@ -813,8 +918,9 @@ class SuperBizAgentApp {
     async sendQuickMessage(message) {
         // 添加等待提示消息
         const loadingMessage = this.addLoadingMessage('正在思考...');
-        
+
         try {
+            this.abortController = new AbortController();
             const response = await fetch(`${this.apiBaseUrl}/chat`, {
                 method: 'POST',
                 headers: {
@@ -823,7 +929,8 @@ class SuperBizAgentApp {
                 body: JSON.stringify({
                     Id: this.sessionId,
                     Question: message
-                })
+                }),
+                signal: this.abortController.signal
             });
 
             if (!response.ok) {
@@ -831,7 +938,7 @@ class SuperBizAgentApp {
             }
 
             const data = await response.json();
-            console.log('[sendQuickMessage] 响应数据:', JSON.stringify(data));
+            this.log('[sendQuickMessage] 响应数据:', JSON.stringify(data));
             
             // 移除等待提示消息
             if (loadingMessage && loadingMessage.parentNode) {
@@ -860,6 +967,7 @@ class SuperBizAgentApp {
                 throw new Error(data.message || '请求失败');
             }
         } catch (error) {
+            if (error.name === 'AbortError') return;
             // 出错时也要移除等待提示消息
             if (loadingMessage && loadingMessage.parentNode) {
                 loadingMessage.parentNode.removeChild(loadingMessage);
@@ -871,6 +979,7 @@ class SuperBizAgentApp {
     // 发送流式消息
     async sendStreamMessage(message) {
         try {
+            this.abortController = new AbortController();
             const response = await fetch(`${this.apiBaseUrl}/chat_stream`, {
                 method: 'POST',
                 headers: {
@@ -879,7 +988,8 @@ class SuperBizAgentApp {
                 body: JSON.stringify({
                     Id: this.sessionId,
                     Question: message
-                })
+                }),
+                signal: this.abortController.signal
             });
 
             if (!response.ok) {
@@ -917,22 +1027,22 @@ class SuperBizAgentApp {
                     for (const line of lines) {
                         if (line.trim() === '') continue;
                         
-                        console.log('[SSE调试] 收到行:', line);
+                        this.log('[SSE调试] 收到行:', line);
                         
                         // 解析SSE格式
                         if (line.startsWith('id:')) {
-                            console.log('[SSE调试] 解析到ID');
+                            this.log('[SSE调试] 解析到ID');
                             continue;
                         } else if (line.startsWith('event:')) {
                             // 兼容 "event:message" 和 "event: message" 两种格式
                             currentEvent = line.substring(6).trim();
-                            console.log('[SSE调试] 解析到事件类型:', currentEvent);
+                            this.log('[SSE调试] 解析到事件类型:', currentEvent);
                             // 注意：后端统一使用 "message" 事件名，真正的类型在 data 的 JSON 中
                             continue;
                         } else if (line.startsWith('data:')) {
                             // 兼容 "data:xxx" 和 "data: xxx" 两种格式
                             const rawData = line.substring(5).trim();
-                            console.log('[SSE调试] 解析到数据, currentEvent:', currentEvent, ', rawData:', rawData);
+                            this.log('[SSE调试] 解析到数据, currentEvent:', currentEvent, ', rawData:', rawData);
                             
                             // 兼容旧格式 [DONE] 标记
                             if (rawData === '[DONE]') {
@@ -945,13 +1055,13 @@ class SuperBizAgentApp {
                             try {
                                 // 尝试解析为 SseMessage 格式的 JSON
                                 const sseMessage = JSON.parse(rawData);
-                                console.log('[SSE调试] 解析JSON成功:', sseMessage);
+                                this.log('[SSE调试] 解析JSON成功:', sseMessage);
                                 
                                 if (sseMessage && typeof sseMessage.type === 'string') {
                                     if (sseMessage.type === 'content') {
                                         const content = sseMessage.data || '';
                                         fullResponse += content;
-                                        console.log('[SSE调试] 添加内容:', content);
+                                        this.log('[SSE调试] 添加内容:', content);
                                         
                                         // 实时渲染 Markdown
                                         if (assistantMessageElement) {
@@ -961,8 +1071,11 @@ class SuperBizAgentApp {
                                             this.highlightCodeBlocks(messageContent);
                                             this.scrollToBottom();
                                         }
+                                    } else if (sseMessage.type === 'tool_call') {
+                                        this.log('[SSE调试] 收到工具调用事件:', sseMessage.data);
+                                        this.handleToolCallEvent(assistantMessageElement, sseMessage.data);
                                     } else if (sseMessage.type === 'done') {
-                                        console.log('[SSE调试] 收到done标记，流结束');
+                                        this.log('[SSE调试] 收到done标记，流结束');
                                         this.handleStreamComplete(assistantMessageElement, fullResponse);
                                         return;
                                     } else if (sseMessage.type === 'error') {
@@ -975,7 +1088,7 @@ class SuperBizAgentApp {
                                     }
                                 } else {
                                     // 不是标准 SseMessage 格式，尝试兼容处理
-                                    console.log('[SSE调试] 非标准格式，尝试兼容处理');
+                                    this.log('[SSE调试] 非标准格式，尝试兼容处理');
                                     fullResponse += rawData;
                                     if (assistantMessageElement) {
                                         const messageContent = assistantMessageElement.querySelector('.message-content');
@@ -986,7 +1099,7 @@ class SuperBizAgentApp {
                                 }
                             } catch (e) {
                                 // JSON 解析失败，尝试兼容旧格式
-                                console.log('[SSE调试] JSON解析失败，使用兼容模式:', e.message);
+                                this.log('[SSE调试] JSON解析失败，使用兼容模式:', e.message);
                                 if (rawData === '') {
                                     fullResponse += '\n';
                                 } else {
@@ -1007,6 +1120,7 @@ class SuperBizAgentApp {
                 reader.releaseLock();
             }
         } catch (error) {
+            if (error.name === 'AbortError') return;
             throw error;
         }
     }
@@ -1159,6 +1273,44 @@ class SuperBizAgentApp {
         }
     }
 
+    // 处理工具调用事件
+    handleToolCallEvent(assistantMessageElement, data) {
+        if (!assistantMessageElement || !data) return;
+
+        const messageContentWrapper = assistantMessageElement.querySelector('.message-content-wrapper');
+        if (!messageContentWrapper) return;
+
+        const toolName = data.tool || 'unknown';
+        const status = data.status;
+
+        if (status === 'start') {
+            // 创建工具调用进行中的指示器
+            const toolIndicator = document.createElement('div');
+            toolIndicator.className = 'tool-call-indicator';
+            toolIndicator.dataset.tool = toolName;
+            toolIndicator.innerHTML = `
+                <span class="tool-call-icon">&#9881;</span>
+                <span class="tool-call-text">正在调用工具: <strong>${this.escapeHtml(toolName)}</strong>...</span>
+            `;
+            messageContentWrapper.appendChild(toolIndicator);
+            this.scrollToBottom();
+        } else if (status === 'end') {
+            // 更新对应工具调用指示器为完成状态
+            const indicators = messageContentWrapper.querySelectorAll('.tool-call-indicator');
+            for (const indicator of indicators) {
+                if (indicator.dataset.tool === toolName && !indicator.classList.contains('completed')) {
+                    indicator.classList.add('completed');
+                    indicator.innerHTML = `
+                        <span class="tool-call-icon completed">&#10003;</span>
+                        <span class="tool-call-text">工具 <strong>${this.escapeHtml(toolName)}</strong> 执行完成</span>
+                    `;
+                    break;
+                }
+            }
+            this.scrollToBottom();
+        }
+    }
+
     // 处理流式传输完成
     handleStreamComplete(assistantMessageElement, fullResponse) {
         if (assistantMessageElement) {
@@ -1183,6 +1335,29 @@ class SuperBizAgentApp {
                 this.renderChatHistory();
             }
         }
+    }
+
+    // 确认弹窗
+    showConfirm(message) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'confirm-overlay';
+            overlay.innerHTML = `
+                <div class="confirm-dialog">
+                    <p class="confirm-message">${this.escapeHtml(message)}</p>
+                    <div class="confirm-actions">
+                        <button class="confirm-btn confirm-btn--cancel">取消</button>
+                        <button class="confirm-btn confirm-btn--danger">确认删除</button>
+                    </div>
+                </div>
+            `;
+            const onCancel = () => { overlay.remove(); resolve(false); };
+            const onConfirm = () => { overlay.remove(); resolve(true); };
+            overlay.addEventListener('click', (e) => { if (e.target === overlay) onCancel(); });
+            overlay.querySelector('.confirm-btn--cancel').addEventListener('click', onCancel);
+            overlay.querySelector('.confirm-btn--danger').addEventListener('click', onConfirm);
+            document.body.appendChild(overlay);
+        });
     }
 
     // 显示通知
@@ -1224,7 +1399,7 @@ class SuperBizAgentApp {
                     notification.parentNode.removeChild(notification);
                 }
             }, 300);
-        }, 3000);
+        }, SuperBizAgentApp.NOTIFICATION_DURATION);
     }
 
     // 处理文件选择
@@ -1244,8 +1419,7 @@ class SuperBizAgentApp {
     // 验证文件类型
     validateFileType(file) {
         const fileName = file.name.toLowerCase();
-        const allowedExtensions = ['.txt', '.md', '.markdown', '.pdf', '.docx', '.pptx'];
-        return allowedExtensions.some(ext => fileName.endsWith(ext));
+        return SuperBizAgentApp.ALLOWED_EXTENSIONS.some(ext => fileName.endsWith(ext));
     }
 
     // 上传文件到知识库（使用 XHR 实现进度条）
@@ -1255,8 +1429,7 @@ class SuperBizAgentApp {
             return;
         }
 
-        const maxSize = 50 * 1024 * 1024;
-        if (file.size > maxSize) {
+        if (file.size > SuperBizAgentApp.MAX_FILE_SIZE) {
             this.showNotification('文件大小不能超过50MB', 'error');
             return;
         }
@@ -1380,6 +1553,7 @@ class SuperBizAgentApp {
     // 发送智能运维请求（SSE 流式模式）
     async sendAIOpsRequest(loadingMessageElement) {
         try {
+            this.abortController = new AbortController();
             const response = await fetch(`${this.apiBaseUrl}/aiops`, {
                 method: 'POST',
                 headers: {
@@ -1387,7 +1561,8 @@ class SuperBizAgentApp {
                 },
                 body: JSON.stringify({
                     session_id: this.sessionId
-                })
+                }),
+                signal: this.abortController.signal
             });
 
             if (!response.ok) {
@@ -1409,7 +1584,7 @@ class SuperBizAgentApp {
                     if (done) {
                         // 流结束，更新最终内容
                         if (fullResponse) {
-                            console.log('AI Ops 流结束，更新最终内容，长度:', fullResponse.length);
+                            this.log('AI Ops 流结束，更新最终内容，长度:', fullResponse.length);
                             this.updateAIOpsMessage(loadingMessageElement, fullResponse, []);
                         }
                         break;
@@ -1426,18 +1601,18 @@ class SuperBizAgentApp {
                     for (const line of lines) {
                         if (line.trim() === '') continue;
                         
-                        console.log('[AI Ops SSE] 收到行:', line);
+                        this.log('[AI Ops SSE] 收到行:', line);
                         
                         // 解析 SSE 格式
                         if (line.startsWith('id:')) {
                             continue;
                         } else if (line.startsWith('event:')) {
                             currentEvent = line.substring(6).trim();
-                            console.log('[AI Ops SSE] 事件类型:', currentEvent);
+                            this.log('[AI Ops SSE] 事件类型:', currentEvent);
                             continue;
                         } else if (line.startsWith('data:')) {
                             const rawData = line.substring(5).trim();
-                            console.log('[AI Ops SSE] 数据:', rawData, ', currentEvent:', currentEvent);
+                            this.log('[AI Ops SSE] 数据:', rawData, ', currentEvent:', currentEvent);
                             
                             // 解析可能包含多个JSON对象的数据
                             const processJsonMessages = (data) => {
@@ -1445,7 +1620,7 @@ class SuperBizAgentApp {
                                 const matches = data.match(jsonPattern);
                                 
                                 if (matches && matches.length > 0) {
-                                    console.log('[AI Ops SSE] 匹配到', matches.length, '个JSON对象');
+                                    this.log('[AI Ops SSE] 匹配到', matches.length, '个JSON对象');
                                     for (const jsonStr of matches) {
                                         try {
                                             const sseMessage = JSON.parse(jsonStr);
@@ -1465,19 +1640,19 @@ class SuperBizAgentApp {
                                                 fullResponse += statusText;
                                             } else if (sseMessage.type === 'report') {
                                                 // 处理最终报告事件 - 流式输出
-                                                console.log('AI Ops 最终报告生成');
+                                                this.log('AI Ops 最终报告生成');
                                                 const reportText = `\n\n## 🎯 诊断报告\n\n${sseMessage.report || ''}\n`;
                                                 fullResponse += reportText;
                                             } else if (sseMessage.type === 'complete') {
                                                 // 处理完成事件
-                                                console.log('AI Ops 诊断完成');
+                                                this.log('AI Ops 诊断完成');
                                                 if (sseMessage.response) {
                                                     fullResponse += `\n\n${sseMessage.response}`;
                                                 }
                                                 this.updateAIOpsMessage(loadingMessageElement, fullResponse, []);
                                                 return true;
                                             } else if (sseMessage.type === 'done') {
-                                                console.log('AI Ops 流完成，最终内容长度:', fullResponse.length);
+                                                this.log('AI Ops 流完成，最终内容长度:', fullResponse.length);
                                                 this.updateAIOpsMessage(loadingMessageElement, fullResponse, []);
                                                 return true;
                                             } else if (sseMessage.type === 'error') {
@@ -1485,7 +1660,7 @@ class SuperBizAgentApp {
                                             }
                                         } catch (e) {
                                             if (e.message.includes('智能运维')) throw e;
-                                            console.log('[AI Ops SSE] 单个JSON解析失败:', jsonStr);
+                                            this.log('[AI Ops SSE] 单个JSON解析失败:', jsonStr);
                                         }
                                     }
                                     if (loadingMessageElement) {
@@ -1532,7 +1707,7 @@ class SuperBizAgentApp {
                                             }
                                         } else if (sseMessage.type === 'report') {
                                             // 处理最终报告事件 - 这是关键！
-                                            console.log('AI Ops 最终报告生成，流式输出中...');
+                                            this.log('AI Ops 最终报告生成，流式输出中...');
                                             const reportText = `\n\n## 🎯 诊断报告\n\n${sseMessage.report || ''}\n`;
                                             fullResponse += reportText;
                                             if (loadingMessageElement) {
@@ -1540,7 +1715,7 @@ class SuperBizAgentApp {
                                             }
                                         } else if (sseMessage.type === 'complete') {
                                             // 处理完成事件
-                                            console.log('AI Ops 诊断完成，最终内容长度:', fullResponse.length);
+                                            this.log('AI Ops 诊断完成，最终内容长度:', fullResponse.length);
                                             if (sseMessage.response) {
                                                 fullResponse += `\n\n${sseMessage.response}`;
                                             }
@@ -1548,7 +1723,7 @@ class SuperBizAgentApp {
                                             this.updateAIOpsMessage(loadingMessageElement, fullResponse, []);
                                             return;
                                         } else if (sseMessage.type === 'done') {
-                                            console.log('AI Ops 流完成，最终内容长度:', fullResponse.length);
+                                            this.log('AI Ops 流完成，最终内容长度:', fullResponse.length);
                                             this.updateAIOpsMessage(loadingMessageElement, fullResponse, []);
                                             return;
                                         } else if (sseMessage.type === 'error') {
@@ -1576,6 +1751,7 @@ class SuperBizAgentApp {
                 reader.releaseLock();
             }
         } catch (error) {
+            if (error.name === 'AbortError') return;
             throw error;
         }
     }
@@ -1603,15 +1779,15 @@ class SuperBizAgentApp {
 
     // 更新智能运维消息（带折叠详情）
     updateAIOpsMessage(messageElement, response, details) {
-        console.log('updateAIOpsMessage 被调用');
-        console.log('messageElement:', messageElement);
-        console.log('response:', response);
-        console.log('response length:', response ? response.length : 0);
-        console.log('details:', details);
+        this.log('updateAIOpsMessage 被调用');
+        this.log('messageElement:', messageElement);
+        this.log('response:', response);
+        this.log('response length:', response ? response.length : 0);
+        this.log('details:', details);
         
         if (!messageElement) {
             // 如果没有传入消息元素，则创建新消息
-            console.log('messageElement 为空，创建新消息');
+            this.log('messageElement 为空，创建新消息');
             return this.addAIOpsMessage(response, details);
         }
 
@@ -1685,14 +1861,14 @@ class SuperBizAgentApp {
         }
 
         // 更新主要响应内容（使用Markdown渲染）
-        console.log('开始渲染 Markdown');
+        this.log('开始渲染 Markdown');
         const renderedHtml = this.renderMarkdown(response);
-        console.log('Markdown 渲染完成，HTML 长度:', renderedHtml ? renderedHtml.length : 0);
+        this.log('Markdown 渲染完成，HTML 长度:', renderedHtml ? renderedHtml.length : 0);
         messageContent.innerHTML = renderedHtml;
-        console.log('innerHTML 已设置');
+        this.log('innerHTML 已设置');
         // 高亮代码块
         this.highlightCodeBlocks(messageContent);
-        console.log('代码块高亮完成');
+        this.log('代码块高亮完成');
         
         // 保存到历史记录
         this.currentChatHistory.push({
@@ -1804,6 +1980,7 @@ class SuperBizAgentApp {
         try {
             await this.sendAIOpsRequest(loadingMessage);
         } catch (error) {
+            if (error.name === 'AbortError') return;
             console.error('智能运维分析失败:', error);
             // 更新消息为错误信息
             if (loadingMessage) {

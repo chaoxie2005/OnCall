@@ -21,7 +21,7 @@ from typing_extensions import TypedDict
 from langchain_qwq import ChatQwen
 
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import get_current_time, query_log, query_prometheus_alerts, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.services.context_compressor import (
     ContextCompressor,
@@ -98,7 +98,7 @@ class RagAgentService:
         )
 
         # 定义基础工具
-        self.tools = [retrieve_knowledge, get_current_time]
+        self.tools = [retrieve_knowledge, get_current_time, query_prometheus_alerts, query_log]
 
         # MCP 客户端（延迟初始化，使用全局管理）
         self.mcp_tools: list = []
@@ -318,6 +318,22 @@ class RagAgentService:
                 message_type = type(token).__name__
 
                 if message_type in ("AIMessage", "AIMessageChunk"):
+                    # 检测并传播工具调用事件
+                    tool_calls = getattr(token, 'tool_calls', None)
+                    if tool_calls:
+                        for tc in tool_calls:
+                            tc_name = tc.get("name", "unknown") if isinstance(tc, dict) else getattr(tc, "name", "unknown")
+                            tc_args = tc.get("args", {}) if isinstance(tc, dict) else getattr(tc, "args", {})
+                            yield {
+                                "type": "tool_call",
+                                "data": {
+                                    "tool": tc_name,
+                                    "status": "start",
+                                    "input": tc_args,
+                                },
+                                "node": node_name
+                            }
+
                     text_yielded = False
 
                     # 方式1：解析 content_blocks（思考/推理模型使用此格式）
@@ -357,6 +373,20 @@ class RagAgentService:
                                             "node": node_name
                                         }
 
+                elif message_type == "ToolMessage":
+                    # 传播工具执行结果事件
+                    tool_name = getattr(token, 'name', 'unknown')
+                    tool_content = getattr(token, 'content', '')
+                    yield {
+                        "type": "tool_call",
+                        "data": {
+                            "tool": tool_name,
+                            "status": "end",
+                            "output": tool_content,
+                        },
+                        "node": node_name
+                    }
+
             logger.info(f"[会话 {session_id}] RAG Agent 查询完成（流式）")
             yield {"type": "complete", "data": {"answer": full_response}}
 
@@ -378,6 +408,10 @@ class RagAgentService:
             list: 消息历史列表 [{"role": "user|assistant", "content": "...", "timestamp": "..."}]
         """
         try:
+            # 确保 agent 和 checkpointer 已初始化
+            if not self._agent_initialized:
+                await self._initialize_agent()
+
             # 使用 checkpointer 的 aget_tuple 方法获取最新的检查点
             config = {"configurable": {"thread_id": session_id}}
 
@@ -443,6 +477,9 @@ class RagAgentService:
             bool: 是否成功
         """
         try:
+            # 确保 agent 和 checkpointer 已初始化
+            if not self._agent_initialized:
+                await self._initialize_agent()
             await self.checkpointer.adelete_thread(session_id)
             logger.info(f"已清除会话历史: {session_id}")
             return True

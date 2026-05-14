@@ -3,18 +3,21 @@ AIOps 智能运维接口
 """
 
 import json
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 from loguru import logger
 
 from app.models.aiops import AIOpsRequest
 from app.services.aiops_service import aiops_service
+from app.core.rate_limiter import conditional_limit
+from app.config import config
 
 router = APIRouter()
 
 
 @router.post("/aiops")
-async def diagnose_stream(request: AIOpsRequest):
+@conditional_limit(config.rate_limit_aiops)
+async def diagnose_stream(request: Request, body: AIOpsRequest):
     """
     AIOps 故障诊断接口（流式 SSE）
 
@@ -121,7 +124,7 @@ async def diagnose_stream(request: AIOpsRequest):
     Returns:
         SSE 事件流
     """
-    session_id = request.session_id or "default"
+    session_id = body.session_id or "default"
     logger.info(f"[会话 {session_id}] 收到 AIOps 诊断请求（流式）")
 
     async def event_generator():

@@ -2,10 +2,12 @@
 
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.services.vector_index_service import vector_index_service
+from app.core.rate_limiter import conditional_limit
+from app.config import config
 from loguru import logger
 
 router = APIRouter()
@@ -19,7 +21,8 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@conditional_limit(config.rate_limit_upload)
+async def upload_file(request: Request, file: UploadFile = File(...)):
     """
     上传文件并自动创建向量索引
 

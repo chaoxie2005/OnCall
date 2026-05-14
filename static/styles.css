@@ -675,6 +675,40 @@ body {
     margin: 10px 0;
     border: 1px solid var(--border-color);
     transition: background 0.3s ease, border-color 0.3s ease;
+    position: relative;
+}
+
+.copy-code-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    opacity: 0.4;
+    transition: all 0.2s ease;
+    z-index: 1;
+}
+
+.copy-code-btn:hover {
+    opacity: 1;
+    background: var(--bg-hover);
+    color: var(--accent-blue);
+    border-color: var(--accent-blue);
+}
+
+.copy-code-btn.copied {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    opacity: 1;
 }
 
 .message-content pre code {
@@ -1086,6 +1120,17 @@ body {
     transform: none;
 }
 
+.send-btn-circle.stop-btn {
+    background: var(--accent-red);
+    color: #ffffff;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.send-btn-circle.stop-btn:hover {
+    background: #d32f2f;
+    color: #ffffff;
+}
+
 .send-btn-circle svg {
     width: 20px;
     height: 20px;
@@ -1316,6 +1361,54 @@ body {
     opacity: 0.7;
 }
 
+/* ===== 工具调用指示器 ===== */
+.tool-call-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    margin-top: 8px;
+    background: var(--aiops-bg);
+    border: 1px solid var(--aiops-border);
+    border-radius: 10px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    animation: fadeInUp 0.3s ease;
+    transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+}
+
+.tool-call-indicator.completed {
+    background: var(--upload-success-bg);
+    border-color: var(--accent-green);
+}
+
+.tool-call-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    font-size: 14px;
+    color: var(--accent-orange);
+    flex-shrink: 0;
+    animation: spin 2s linear infinite;
+}
+
+.tool-call-icon.completed {
+    color: var(--accent-green);
+    animation: none;
+}
+
+.tool-call-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.tool-call-text strong {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
 /* ===== AIOps 消息 ===== */
 .aiops-message {
     max-width: 90%;
@@ -1471,10 +1564,137 @@ body {
     animation: pulse 1.5s ease-in-out infinite;
 }
 
+/* ===== 确认弹窗 ===== */
+.confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10001;
+    animation: fadeIn 0.2s ease;
+}
+
+.confirm-dialog {
+    background: var(--bg-dropdown);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 24px;
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--shadow-lg);
+    animation: fadeInScale 0.25s ease;
+}
+
+.confirm-message {
+    font-size: 15px;
+    color: var(--text-primary);
+    margin: 0 0 20px 0;
+    line-height: 1.6;
+}
+
+.confirm-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+}
+
+.confirm-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+
+.confirm-btn--cancel {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.confirm-btn--cancel:hover {
+    background: var(--border-color);
+}
+
+.confirm-btn--danger {
+    background: var(--accent-red);
+    color: #ffffff;
+}
+
+.confirm-btn--danger:hover {
+    background: #d32f2f;
+}
+
+/* ===== 汉堡菜单按钮 ===== */
+.hamburger-btn {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--text-secondary);
+    z-index: 200;
+    transition: all 0.2s ease;
+    box-shadow: var(--shadow-xs);
+}
+
+.hamburger-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.hamburger-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* ===== 移动端侧边栏遮罩 ===== */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-bg);
+    z-index: 250;
+    animation: fadeIn 0.2s ease;
+}
+
+.sidebar-overlay.active {
+    display: block;
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 768px) {
+    .hamburger-btn {
+        display: flex;
+    }
+
     .sidebar {
-        width: 240px;
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 260px;
+        z-index: 300;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        box-shadow: var(--shadow-lg);
+    }
+
+    .sidebar.open {
+        transform: translateX(0);
     }
 
     .message-content {
