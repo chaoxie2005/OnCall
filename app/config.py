@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 
+    # 上下文压缩配置
+    context_compression_enabled: bool = True
+    context_compression_trigger_fraction: float = 0.7  # 70% 时触发压缩
+    context_compression_keep_recent: int = 6  # 压缩后保留最近消息数（3轮对话）
+    context_compression_model_window: int = 32768  # qwen-max 上下文窗口
+
     # MCP 服务配置
     mcp_cls_transport: str = "streamable-http"
     mcp_cls_url: str = "http://localhost:8003/mcp"

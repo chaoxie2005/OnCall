@@ -22,6 +22,10 @@ from langchain_qwq import ChatQwen
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
+from app.services.context_compressor import (
+    ContextCompressor,
+    create_compression_middleware,
+)
 
 # 阿里千问大模型和langchain集成参考： https://docs.langchain.com/oss/python/integrations/chat/qwen
 # 注意：需要配置环境变量 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1 否则默认访问的是新加坡站点
@@ -99,6 +103,22 @@ class RagAgentService:
         # 创建内存检查点（用于会话管理）
         self.checkpointer = MemorySaver()
 
+        # 创建用于摘要的独立模型实例（非流式，低温度）
+        self._summary_model = ChatQwen(
+            model=self.model_name,
+            api_key=config.dashscope_api_key,
+            temperature=0.3,
+            streaming=False,
+        )
+
+        # 初始化上下文压缩器
+        self.compressor = ContextCompressor(
+            model=self._summary_model,
+            context_window=config.context_compression_model_window,
+            trigger_fraction=config.context_compression_trigger_fraction,
+            keep_recent=config.context_compression_keep_recent,
+        )
+
         # Agent 初始化（会在异步方法中完成）
         self.agent = None
         self._agent_initialized = False
@@ -123,11 +143,19 @@ class RagAgentService:
         # 合并所有工具
         all_tools = self.tools + self.mcp_tools
 
+        # 构建中间件列表：压缩中间件（可选）+ 消息修剪（兜底）
+        middleware_list = []
+        if config.context_compression_enabled:
+            middleware_list.append(create_compression_middleware(self.compressor))
+            logger.info("上下文压缩中间件已启用")
+        # 保留原有的消息修剪作为最后的安全兜底
+        middleware_list.append(trim_messages_middleware)
+
         self.agent = create_agent(
             self.model,
             tools=all_tools,
             checkpointer=self.checkpointer,
-            middleware=[trim_messages_middleware],
+            middleware=middleware_list,
         )
 
         self._agent_initialized = True

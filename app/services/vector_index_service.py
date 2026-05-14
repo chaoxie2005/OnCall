@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from loguru import logger
 
 from app.services.document_splitter_service import document_splitter_service
+from app.services.file_handlers.registry import get_handler_for_file
 from app.services.vector_store_manager import vector_store_manager
 
 
@@ -64,6 +65,12 @@ class VectorIndexService:
         self.upload_path = "./uploads"
         logger.info("向量索引服务初始化完成")
 
+    @property
+    def _allowed_extensions(self) -> list:
+        """从 handler 注册中心获取所有支持的文件扩展名"""
+        from app.services.file_handlers import FileHandlerRegistry
+        return FileHandlerRegistry().get_allowed_extensions()
+
     def index_directory(self, directory_path: Optional[str] = None) -> IndexingResult:
         """
         索引指定目录下的所有文件
@@ -88,7 +95,9 @@ class VectorIndexService:
             result.directory_path = str(dir_path)
 
             # 获取所有支持的文件
-            files = list(dir_path.glob("*.txt")) + list(dir_path.glob("*.md"))
+            files = []
+            for ext in self._allowed_extensions:
+                files.extend(dir_path.glob(f"*.{ext}"))
 
             if not files:
                 logger.warning(f"目录中没有找到支持的文件: {target_path}")
@@ -147,9 +156,10 @@ class VectorIndexService:
         logger.info(f"开始索引文件: {path}")
 
         try:
-            # 1. 读取文件内容
-            content = path.read_text(encoding="utf-8")
-            logger.info(f"读取文件: {path}, 内容长度: {len(content)} 字符")
+            # 1. 使用文件处理器提取文本（自动适配 pdf/docx/txt/md 等格式）
+            handler = get_handler_for_file(str(path))
+            content = handler.extract_text(str(path))
+            logger.info(f"读取文件: {path}, 处理器: {handler.__class__.__name__}, 内容长度: {len(content)} 字符")
 
             # 2. 删除该文件的旧数据（如果存在）
             normalized_path = path.as_posix()
