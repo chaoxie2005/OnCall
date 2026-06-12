@@ -1,416 +1,337 @@
-# SuperBizAgent
+# OnCall
 
-> 企业级智能对话和运维助手，支持 RAG 知识库问答和 AIOps 智能诊断
+> 智能运维助手 — 把日志查询和监控诊断的活交给 Agent 去跑，我在旁边喝茶。
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
-[![LangChain](https://img.shields.io/badge/LangChain-latest-orange.svg)](https://www.langchain.com/)
+[![LangChain](https://img.shields.io/badge/LangChain-0.1+-orange.svg)](https://www.langchain.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-0.0.40+-purple.svg)](https://langchain-ai.github.io/langgraph/)
 
-## ✨ 核心特性
+## 这是什么
 
-- 🤖 **智能对话** - LangChain 多轮对话 + 流式输出
-- 📚 **RAG 问答** - 向量检索增强，支持文档上传、自动建立向量索引、自动更新知识库
-- 🔧 **AIOps 诊断** - Plan-Execute-Replan 自动故障诊断和根因分析
-- 🌐 **Web 界面** - 现代化 UI，支持多种对话模式：快速问答/流式对话
-- 🔌 **MCP 集成** - 日志查询和监控数据工具接入
+一个给运维团队用的对话式 Agent 系统。接入了日志平台和 Prometheus 监控数据，让大模型能直接帮你查日志、看指标、诊断故障。有两个核心能力：
 
-## 🛠️ 技术栈
+- **RAG 问答** — 上传运维文档后，Agent 基于文档回答问题，问不到的内容拒绝编造。
+- **AIOps 诊断** — 给定一个告警，Agent 自动制定排查计划、调用工具搜索日志和监控数据、输出诊断报告。
 
-- **框架**: FastAPI + LangChain + LangGraph
-- **LLM**: 阿里云 DashScope (通义千问)
-- **向量库**: Milvus
-- **工具协议**: MCP (Model Context Protocol)
+Web 界面长这样（对话页 + 诊断页）：
 
-## 🚀 快速开始
+![screenshot](static/screenshot.png)
 
-### 环境要求
-- Python 3.10+
-- 阿里云 DashScope API Key ([获取地址](https://dashscope.aliyun.com/))
+## 技术选型 & 踩过的坑
 
-### 安装和启动
+| 层 | 选型 | 为什么 |
+|---|---|---|
+| 框架 | FastAPI + SSE | 诊断流程可能要跑几十秒，必须流式输出，不能让前端干等。 |
+| 模型 | Qwen-Max (DashScope) | OpenAI 兼容协议，切模型不需要改代码。温度设 0.7，诊断时降为 0 降低幻觉。 |
+| Agent 编排 | LangGraph | 最开始用 LangChain 的 AgentExecutor，发现工具调用失败后不会重试，排查流程没法中途调整。换了 LangGraph 的状态图，Plan → Execute → Replan 三阶段，每一步都能 inspect。 |
+| 工具协议 | MCP (Model Context Protocol) | 工具和 Agent 之间用 MCP 解耦。日志查询服务、监控服务各自是独立的 MCP Server，Agent 通过 MCP Client 调用。后面换了监控数据源，Agent 代码一行没改。 |
+| 向量库 | Milvus 2.3+ | 支持稠密+稀疏混合检索。一开始只用了 COSINE 相似度，发现关键词匹配场景（比如搜 "CPU 100%"）效果不好，补了 BM25 稀疏向量做 RRF 融合。 |
+| 重排序 | qwen3-rerank | 粗排召回 10 条 → 精排取 Top 3。相似度 < 0.5 的直接丢弃，避免拿不相关文档去问模型。重排服务挂了有降级：单文档跳过 → API 异常回退 → 全局开关关闭。 |
+| 会话存储 | SQLite (AsyncSqliteSaver) | 最早用 MemorySaver，服务重启对话全丢。迁移到 SqliteSaver 后会话持久化，`data/oncall_sessions.db` 一个文件搞定。 |
+| 速率限制 | slowapi | 按端点分级：对话 10/min，流式对话 5/min，AIOps 3/min。因为 DashScope API 是付费的，不加限制一个死循环能把额度刷光。 |
+| 上下文压缩 | 自写中间件 | LangChain 内置的 SummarizationMiddleware 依赖模型 profile 属性，Qwen 没有。自己写了个 before_model 中间件：QwenTokenizer 精确计数 → 超过 70% 窗口触发压缩 → 失败降级 trim 截断。 |
 
-#### Linux/macOS 环境
+## 项目结构
+
+```
+OnCall/
+├── app/
+│   ├── main.py                        # FastAPI 入口，lifespan 里连 Milvus 初始化 BM25
+│   ├── config.py                      # 全部配置项 + 默认值（Pydantic Settings）
+│   ├── api/                           # 路由层，只做参数校验和响应格式化
+│   │   ├── chat.py                    #   POST /api/chat, /api/chat_stream, DELETE /api/chat/clear
+│   │   ├── aiops.py                   #   POST /api/aiops  SSE 流式诊断
+│   │   ├── file.py                    #   POST /api/upload  文档上传入库
+│   │   └── health.py                  #   GET  /api/health
+│   ├── services/                      # 业务逻辑都在这里
+│   │   ├── rag_agent_service.py       #   Agent 核心：create_agent + 中间件 + 工具注册
+│   │   ├── aiops_service.py           #   Plan-Execute-Replan 诊断流程编排
+│   │   ├── context_compressor.py      #   上下文压缩中间件（自实现）
+│   │   ├── document_splitter_service.py # 文档切分：Markdown 三阶段 / PDF / Word
+│   │   ├── vector_embedding_service.py  # 稠密 (text-embedding-v4) + 稀疏 (BM25)
+│   │   ├── vector_index_service.py      # Milvus 索引管理 + Schema 迁移
+│   │   ├── vector_search_service.py     # 混合检索：稠密 + 稀疏 RRF 融合 → 重排序
+│   │   └── vector_store_manager.py      # Collection 生命周期管理
+│   ├── agent/                         # Agent 专属模块
+│   │   ├── mcp_client.py              #   MCP 多服务客户端（单例 + 指数退避重试）
+│   │   └── aiops/                     #   Plan-Execute-Replan 三节点
+│   │       ├── planner.py             #     查询知识库经验 → 生成诊断步骤
+│   │       ├── executor.py            #     逐步执行，失败传错误给 Replanner
+│   │       ├── replanner.py           #     评估结果，决定继续/调整/出报告
+│   │       ├── state.py               #     状态 TypedDict 定义
+│   │       └── utils.py               #     工具描述格式化
+│   ├── core/                          # 基础设施
+│   │   ├── llm_factory.py             #   ChatQwen 实例工厂
+│   │   ├── milvus_client.py           #   Milvus 连接管理（单例）
+│   │   └── rate_limiter.py            #   slowapi 包装器
+│   ├── models/                        # Pydantic 请求/响应模型
+│   └── utils/
+│       └── logger.py                  # Loguru 配置：按天轮转 + 控制台彩色输出
+├── static/                            # 前端：纯 HTML + vanilla JS + CSS
+│   ├── index.html
+│   ├── app.js
+│   └── styles.css
+├── mcp_servers/                       # MCP 工具服务（独立进程）
+│   ├── cls_server.py                  #   日志查询服务 (FastMCP)
+│   └── monitor_server.py              #   监控数据服务 (Prometheus)
+├── aiops-docs/                        # 运维知识库 Markdown 文档
+├── data/                              # 运行时数据（SQLite 会话库等）
+├── logs/                              # Loguru 日志输出
+├── uploads/                           # 上传文件临时目录
+├── volumes/                           # Milvus 数据持久化
+├── .env                               # 环境变量（需手动创建）
+├── Makefile                           # Linux/macOS 项目管理
+├── start-windows.bat                  # Windows 启动脚本
+├── stop-windows.bat                   # Windows 停止脚本
+├── vector-database.yml                # Milvus Docker Compose
+├── pyproject.toml                     # 依赖 + black/ruff/mypy/pytest 配置
+└── README.md
+```
+
+## 快速开始
+
+### 前置条件
+
+- Python 3.11+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) （跑 Milvus 用）
+- [DashScope API Key](https://dashscope.aliyun.com/) （阿里云百炼平台注册就能拿）
+
+### 安装启动
+
+**Linux / macOS：**
 
 ```bash
-# 1. 克隆项目
-git clone <repository_url>
-cd super_biz_agent_py
+git clone <your-repo-url>
+cd OnCall
 
-# 2. 安装依赖（推荐使用 uv）
-# 方式 1: 使用 uv（推荐，更快）
+# 装依赖（推荐 uv，比 pip 快一个数量级）
 pip install uv
-uv venv
-source .venv/bin/activate
+uv venv && source .venv/bin/activate
 uv pip install -e .
 
-# 方式 2: 使用 pip
-pip install -e .
+# 编辑 .env，填上你的 DASHSCOPE_API_KEY
+cp .env.example .env   # 如果没有 .env.example，手动创建，格式见下方配置说明
+vim .env
 
-# 3. 编辑配置文件
-# 首次使用需要编辑 .env 文件，填入你的 DASHSCOPE_API_KEY
-vim .env  # 或使用其他编辑器
-
-# 4. 一键初始化（启动 Docker + 服务 + 上传文档）
+# 一键初始化（拉 Docker 镜像 + 启 Milvus + 启服务 + 上传文档）
 make init
 
-# 5. 一键启动
+# 后续启动只需
 make start
 ```
 
-#### Windows 环境（PowerShell/CMD）
-
-如果Windows 不支持 `make` 命令，可以手动执行以下步骤以启动服务：
+**Windows（PowerShell）：**
 
 ```powershell
-# 1. 克隆项目
-git clone <repository_url>
-cd super_biz_agent_py
+git clone <your-repo-url>
+cd OnCall
 
-# 2. 创建虚拟环境并安装依赖
-# 方式 1: 使用 uv（推荐，更快）
+# 装依赖
 pip install uv
-# 创建虚拟环境
 uv venv
-# 激活虚拟环境
 .venv\Scripts\activate
-# 安装所有依赖
 uv pip install -e .
 
-# 方式 2: 使用 pip
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e i.
-
-# 3. 编辑配置文件
-# 使用记事本或其他编辑器打开 .env 文件，填入你的 DASHSCOPE_API_KEY
+# 编辑 .env，填 DASHSCOPE_API_KEY
 notepad .env
 
-# 4. 启动 Docker Desktop
-# 确保 Docker Desktop 已安装并正在运行
-
-# 5. 启动 Milvus 向量数据库（Docker Compose）
-docker compose -f vector-database.yml up -d
-
-# 6. 等待 Milvus 启动完成（约 5-10 秒）
-timeout /t 10
-
-# 7. 启动 MCP 服务
-# 启动 CLS 日志查询服务（新开一个 PowerShell 窗口）
-python mcp_servers/cls_server.py
-
-# 启动 Monitor 监控服务（新开一个 PowerShell 窗口）
-python mcp_servers/monitor_server.py
-
-# 8. 启动 FastAPI 主服务（新开一个 PowerShell 窗口）
-# 注意：日志会自动输出到 logs\app_YYYY-MM-DD.log
-python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
-
-# 9. 上传文档到向量库（新开一个 PowerShell 窗口）
-# 等待服务启动完成后执行
-timeout /t 5
-python -c "import requests, os, time; [requests.post('http://localhost:9900/api/upload', files={'file': open(f'aiops-docs/{f}', 'rb')}) or time.sleep(1) for f in os.listdir('aiops-docs') if f.endswith('.md')]"
-```
-
-**Windows 一键启动脚本**（推荐）
-
-使用启动脚本：
-
-```powershell
-# 启动所有服务
+# 方式一：一键脚本
 .\start-windows.bat
 
-# 停止所有服务
-.\stop-windows.bat
+# 方式二：手动一步步起（方便排查问题）
+# 终端1：启动 Milvus
+docker compose -f vector-database.yml up -d
+
+# 终端2：启动日志 MCP 服务
+python mcp_servers/cls_server.py
+
+# 终端3：启动监控 MCP 服务
+python mcp_servers/monitor_server.py
+
+# 终端4：启动主服务
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
+
+# 上传知识库文档（主服务起来后再跑）
+python -c "import requests, os; [requests.post('http://localhost:9900/api/upload', files={'file': open(f'aiops-docs/{f}', 'rb')}) for f in os.listdir('aiops-docs') if f.endswith('.md')]"
 ```
 
-### 访问服务
-- **Web 界面**: http://localhost:9900
-- **API 文档**: http://localhost:9900/docs
+### 访问
 
-## 📡 API 接口
+| 地址 | 内容 |
+|---|---|
+| http://localhost:9900 | Web 对话界面 |
+| http://localhost:9900/docs | Swagger API 文档 |
 
-### 核心接口
+## API
 
-| 功能 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| 普通对话 | POST | `/api/chat` | 一次性返回 |
-| 流式对话 | POST | `/api/chat_stream` | SSE 流式输出 |
-| AIOps 诊断 | POST | `/api/aiops` | 自动故障诊断（流式） |
-| 文件上传 | POST | `/api/upload` | 上传并索引文档 |
-| 健康检查 | GET | `/api/health` | 服务状态检查 |
+### 接口总览
 
-### 使用示例
+| 方法 | 路径 | 说明 | 限流 |
+|---|---|---|---|
+| POST | `/api/chat` | 普通对话，一次性返回 | 10/min |
+| POST | `/api/chat_stream` | 流式对话，SSE | 5/min |
+| POST | `/api/aiops` | AIOps 诊断，SSE 流式 | 3/min |
+| POST | `/api/upload` | 上传文档到知识库 | 20/min |
+| GET | `/api/health` | 健康检查 | - |
+
+### 调用示例
 
 ```bash
 # 普通对话
 curl -X POST "http://localhost:9900/api/chat" \
   -H "Content-Type: application/json" \
-  -d '{"Id":"session-123","Question":"你好"}'
+  -d '{"Id":"session-001","Question":"生产环境 CPU 飙高怎么排查？"}'
 
-# 流式对话
+# 流式对话（SSE）
 curl -X POST "http://localhost:9900/api/chat_stream" \
   -H "Content-Type: application/json" \
-  -d '{"Id":"session-123","Question":"你好"}' \
+  -d '{"Id":"session-001","Question":"帮我查下最近的错误日志"}' \
   --no-buffer
 
 # AIOps 诊断
 curl -X POST "http://localhost:9900/api/aiops" \
   -H "Content-Type: application/json" \
-  -d '{"session_id":"session-123"}' \
+  -d '{"session_id":"session-001"}' \
   --no-buffer
 ```
 
-## 📁 项目结构
+SSE 事件类型：`content`（文本片段）、`tool_call`（工具调用开始/结束）、`search_results`（检索结果）、`done`（完成）、`error`（错误）。
 
-```
-super_biz_agent_py/
-├── app/                                    # 应用核心
-│   ├── __init__.py                         # 包初始化（自动加载日志配置）
-│   ├── main.py                             # FastAPI 应用入口
-│   ├── config.py                           # 配置管理（环境变量、MCP 服务器配置）
-│   ├── api/                                # API 路由层
-│   │   ├── __init__.py
-│   │   ├── chat.py                         # 对话接口（RAG 聊天）
-│   │   ├── aiops.py                        # AIOps 接口（故障诊断）
-│   │   ├── file.py                         # 文件管理（文档上传）
-│   │   └── health.py                       # 健康检查（服务状态）
-│   ├── services/                           # 业务服务层
-│   │   ├── __init__.py
-│   │   ├── rag_agent_service.py            # RAG Agent（LangGraph 状态图）
-│   │   ├── aiops_service.py                # AIOps 服务（计划-执行-重规划）
-│   │   ├── vector_store_manager.py         # 向量存储管理器
-│   │   ├── vector_embedding_service.py     # 向量embedding服务
-│   │   ├── vector_index_service.py         # 向量索引服务
-│   │   ├── vector_search_service.py        # 向量检索服务
-│   │   └── document_splitter_service.py    # 文档分割服务
-│   ├── agent/                              # Agent 模块
-│   │   ├── __init__.py
-│   │   ├── mcp_client.py                   # MCP 客户端（工具调用）
-│   │   └── aiops/                          # AIOps 核心逻辑
-│   │       ├── __init__.py
-│   │       ├── planner.py                  # 计划制定器
-│   │       ├── executor.py                 # 步骤执行器
-│   │       ├── replanner.py                # 重规划器
-│   │       ├── state.py                    # 状态定义
-│   │       └── utils.py                    # 工具函数
-│   ├── models/                             # 数据模型层
-│   │   ├── __init__.py
-│   │   ├── aiops.py                        # AIOps 模型
-│   │   ├── document.py                     # 文档模型
-│   │   ├── request.py                      # 请求模型
-│   │   └── response.py                     # 响应模型
-│   ├── tools/                              # Agent 工具集
-│   │   ├── __init__.py
-│   │   ├── knowledge_tool.py               # 知识库查询工具
-│   │   └── time_tool.py                    # 时间工具
-│   ├── core/                               # 核心组件
-│   │   ├── __init__.py
-│   │   ├── llm_factory.py                  # LLM 工厂（模型管理）
-│   │   └── milvus_client.py                # Milvus 客户端
-│   └── utils/                              # 工具类
-│       ├── __init__.py
-│       └── logger.py                       # 日志配置（Loguru）
-├── static/                                 # Web 前端（纯静态）
-│   ├── index.html                          # 主页面
-│   ├── app.js                              # 前端逻辑
-│   └── styles.css                          # 样式表
-├── mcp_servers/                            # MCP 服务器
-│   ├── cls_server.py                       # CLS 日志查询服务
-│   ├── monitor_server.py                   # 监控数据服务
-│   └── README.md                           # MCP 服务说明
-├── aiops-docs/                             # 运维知识库（Markdown 文档）
-├── logs/                                   # 日志目录（Loguru 自动创建）
-│   └── app_YYYY-MM-DD.log                  # 按天轮转的日志文件
-├── uploads/                                # 上传文件临时目录
-├── volumes/                                # Milvus 数据持久化目录
-├── .env                                    # 环境变量配置（需手动创建）
-├── Makefile                                # 项目管理命令（Linux/macOS）
-├── start-windows.bat                       # Windows 启动脚本
-├── stop-windows.bat                        # Windows 停止脚本
-├── vector-database.yml                     # Milvus Docker Compose 配置
-├── pyproject.toml                          # 项目配置（依赖、元数据）
-├── uv.lock                                 # uv 依赖锁定文件
-├── pyrightconfig.json                      # Pyright 类型检查配置
-└── README.md                               # 项目说明
-```
+## 配置
 
-## ⚙️ 配置说明
-
-通过 `.env` 文件配置：
+所有配置项通过 `.env` 文件管理，有默认值的可以省略：
 
 ```bash
-# 阿里云LLM DashScope 配置（必填）
-# 秘钥管理： https://bailian.console.aliyun.com/cn-beijing/?spm=5176.29597918.J_SEsSjsNv72yRuRFS2VknO.2.61ac133ccTVQLw&tab=demohouse#/api-key
-DASHSCOPE_API_KEY=your-api-key （配置你自己的秘钥）
-DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1  # 不配置则默认会使用新加坡站点
+# 必填
+DASHSCOPE_API_KEY=sk-your-key-here
+# 如果用国内站点，需要指定（默认走新加坡）
+DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
 DASHSCOPE_MODEL=qwen-max
 
-# Milvus 配置
+# Milvus
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 
-# RAG 配置
-RAG_TOP_K=3
+# RAG
+RAG_TOP_K=10                  # 粗排召回条数
+RAG_SCORE_THRESHOLD=0.5       # 相似度过滤阈值
+RERANK_ENABLED=true           # 重排序开关
+RERANK_TOP_N=3                # 精排保留条数
+HYBRID_SEARCH_ENABLED=true    # 混合检索开关（稠密+稀疏）
+
+# 文档分块
 CHUNK_MAX_SIZE=800
 CHUNK_OVERLAP=100
+
+# 上下文压缩
+CONTEXT_COMPRESSION_ENABLED=true
+CONTEXT_COMPRESSION_TRIGGER_FRACTION=0.7  # 达到窗口 70% 触发压缩
+
+# 会话持久化
+CHECKPOINT_DB_PATH=data/oncall_sessions.db
+
+# 速率限制
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_CHAT=10/minute
+RATE_LIMIT_CHAT_STREAM=5/minute
+RATE_LIMIT_AIOP=3/minute
+RATE_LIMIT_UPLOAD=20/minute
+
+# MCP 服务地址
+MCP_CLS_URL=http://localhost:8003/mcp
+MCP_MONITOR_URL=http://localhost:8004/mcp
+
+# Prometheus
+PROMETHEUS_BASE_URL=http://localhost:9090
 ```
 
-## 🎯 AIOps 智能运维
+## AIOps 诊断流程
 
-基于 **Plan-Execute-Replan** 模式实现自动故障诊断。
+基于 LangGraph 的 **Plan-Execute-Replan** 模式，完整流程：
 
-### 核心特性
-- ✅ 自动制定诊断计划（Planner）
-- ✅ 智能工具调用（Executor）
-- ✅ 动态调整步骤（Replanner）
-- ✅ 流式输出诊断过程
-- ✅ 生成结构化报告
-
-### 快速测试
-
-```bash
-# 服务已通过 make init 自动启动
-# 如需重启服务：make restart
-
-# 访问 Web 界面，点击"智能运维与诊断工具"
-# 或使用 API
-curl -X POST "http://localhost:9900/api/aiops" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"test"}' \
-  --no-buffer
+```
+用户发起诊断
+    ↓
+1. Planner — 查知识库找相关运维经验 → 分析有什么工具可用 → 生成 4~6 步诊断计划
+    ↓
+2. Executor — 逐步执行计划，调用 MCP 工具（查日志、拉 Prometheus 指标）
+    ↓       ← 失败？传错误信息给 Replanner
+3. Replanner — 评估当前结果，决定：继续下一步 / 调整剩余计划 / 直接生成报告
+    ↓
+4. 输出结构化诊断报告（根因分析 + 关键证据 + 运维建议）
 ```
 
-### 诊断流程
-```
-1. Planner 制定计划 → 生成 4-6 个诊断步骤
-2. Executor 执行步骤 → 调用 MCP 工具（日志查询、监控数据）
-3. Replanner 评估结果 → 决定继续/调整/生成报告
-4. 输出诊断报告 → 根因分析 + 运维建议
-```
+保护机制：
+- 最多 8 步，超过 5 步后禁止重规划，防止无限循环。
+- Executor 单步失败不中断，错误信息传给 Replanner 判断要不要重试。
+- 整个过程 SSE 流式推给前端，能看到每一步的执行状态。
 
-## 📝 开发指南
+## 知识库支持的文件类型
 
-### 常用命令
+| 类型 | 处理方式 |
+|---|---|
+| `.md` | Markdown 三段切分：按标题切 → 长段落递归切 → 碎片合并（保证 chunk 在 800 字以内且不切断句子） |
+| `.txt` | 按段落 + 长度切分 |
+| `.pdf` | pdfplumber 提取文本后切分 |
+| `.docx` | python-docx 提取文本后切分 |
 
-```bash
-# 项目管理
-make init              # 一键初始化（Docker + 服务 + 文档）
-make start             # 启动所有服务
-make stop              # 停止所有服务
-make restart           # 重启所有服务
+新增文件类型只需加一个 Handler 类，注册到 HandlerRegistry，不用改已有代码。
 
-# 依赖管理
-make install-dev       # 安装开发依赖
-make sync              # 同步依赖
+## 常见问题
 
-# Docker 管理
-make up                # 启动 Docker 容器
-make down              # 停止 Docker 容器
+### Windows 相关
 
-# 代码质量
-make format            # 格式化代码
-make lint              # 代码检查
-```
-
-
-## 🐛 常见问题
-
-### Windows 环境问题
-
-#### 1. `make` 命令不可用
-Windows 不支持 `make` 命令，请使用提供的批处理脚本：
+**`make` 命令不可用：**
 ```powershell
-# 启动服务
-.\start-windows.bat
-
-# 停止服务
-.\stop-windows.bat
+.\start-windows.bat   # 用批处理替代
 ```
 
-#### 2. PowerShell 执行策略限制
-如果遇到 "无法加载文件，因为在此系统上禁止运行脚本" 错误：
+**PowerShell 脚本执行报错：**
 ```powershell
-# 临时允许脚本执行（管理员权限）
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
-
-# 或者使用 CMD 而不是 PowerShell
-cmd
-.\start-windows.bat
+# 或者直接用 CMD 跑 .bat
 ```
 
-#### 3. 端口被占用（Windows）
+**端口被占用：**
 ```powershell
-# 查看占用端口的进程
 netstat -ano | findstr :9900
-
-# 结束进程（替换 PID 为实际进程 ID）
 taskkill /F /PID <PID>
 ```
 
 ### 通用问题
 
-### API Key 错误
+**DashScope API Key 报错：**
 ```bash
-# 检查环境变量
-cat .env | grep DASHSCOPE_API_KEY    # Linux/macOS
+# 确认 .env 里填了 key（不是示例值）
+cat .env | grep DASHSCOPE_API_KEY     # Linux/macOS
 type .env | findstr DASHSCOPE_API_KEY  # Windows
 ```
 
-### Milvus 连接失败
+**Milvus 连不上：**
 ```bash
-# 确保本机有 Docker 服务并且已经启动（可以使用 Docker Desktop）
-
-# 检查 Milvus 状态
+# 确保 Docker Desktop 在运行
 docker ps | grep milvus
 
-# 重启 Milvus（使用 docker compose）
-docker compose -f vector-database.yml restart
+# 没有就启动
+docker compose -f vector-database.yml up -d
 
-# 或者重启单个服务
+# 起来了但连不上，重启 standalone 容器
 docker compose -f vector-database.yml restart standalone
 ```
 
-### 服务无法启动
-
-**Linux/macOS:**
+**服务启动失败，想查日志：**
 ```bash
-# 查看服务日志
-tail -f logs/app_$(date +%Y-%m-%d).log  # FastAPI 主服务（Loguru 日志）
-tail -f mcp_cls.log                      # CLS MCP 服务
-tail -f mcp_monitor.log                  # Monitor MCP 服务
+# Linux/macOS
+tail -f logs/app_$(date +%Y-%m-%d).log   # 主服务
+tail -f mcp_cls.log                       # CLS MCP
+tail -f mcp_monitor.log                   # Monitor MCP
 
-# 检查端口占用
-lsof -i :9900  # FastAPI
-lsof -i :8003  # CLS MCP
-lsof -i :8004  # Monitor MCP
-```
-
-**Windows:**
-```powershell
-# 查看服务日志（获取今天的日期）
+# Windows PowerShell
 $today = Get-Date -Format "yyyy-MM-dd"
-type logs\app_$today.log  # FastAPI 主服务（Loguru 日志）
-type mcp_cls.log          # CLS MCP 服务
-type mcp_monitor.log      # Monitor MCP 服务
-
-# 或者查看最新的日志文件
-Get-ChildItem logs\*.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content -Tail 50
-
-# 检查端口占用
-netstat -ano | findstr :9900  # FastAPI
-netstat -ano | findstr :8003  # CLS MCP
-netstat -ano | findstr :8004  # Monitor MCP
+Get-Content logs\app_$today.log -Tail 50
 ```
 
-## 📚 参考资源
+## License
 
-- [FastAPI 文档](https://fastapi.tiangolo.com/)
-- [LangChain 文档](https://python.langchain.com/)
-- [LangGraph Plan-Execute](https://langchain-ai.github.io/langgraph/tutorials/plan-and-execute/)
-- [阿里云 DashScope](https://dashscope.aliyun.com/)
-- [MCP 协议](https://modelcontextprotocol.io/)
-
-## 📄 许可证
-author： chief
-
-MIT License
+MIT

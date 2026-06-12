@@ -18,6 +18,55 @@ from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
 
 
+def _initialize_bm25() -> None:
+    """加载或从 Milvus 语料拟合 BM25 模型。
+
+    优先从磁盘加载已持久化的模型；若不存在则从 Milvus
+    收集现有文档作为语料进行拟合。Schema 迁移后自动重索引
+    稀疏向量。
+    """
+    from app.services.bm25_embedding_service import bm25_embedding_service
+
+    if bm25_embedding_service.is_fitted:
+        logger.info("BM25 模型已在 VectorStoreManager 初始化阶段加载")
+        return
+
+    if not bm25_embedding_service._try_load_from_disk():
+        try:
+            collection = milvus_manager.get_collection()
+            batch_size = 1000
+            offset = 0
+            corpus: list[str] = []
+            while True:
+                results = collection.query(
+                    expr="",
+                    output_fields=["content"],
+                    limit=batch_size,
+                    offset=offset,
+                )
+                if not results:
+                    break
+                corpus.extend(r["content"] for r in results if r.get("content"))
+                offset += batch_size
+
+            if corpus:
+                bm25_embedding_service.fit(corpus)
+                logger.info(f"BM25 模型从 Milvus 语料拟合完成，文档数: {len(corpus)}")
+            else:
+                logger.info("Milvus 中暂无文档，BM25 将在首次文档上传时延迟拟合")
+        except Exception as e:
+            logger.warning(f"BM25 初始化失败，将回退到纯稠密检索: {e}")
+
+    # Schema 迁移后自动重索引稀疏向量
+    if milvus_manager.schema_migrated and bm25_embedding_service.is_fitted:
+        try:
+            from app.services.vector_index_service import vector_index_service
+            count = vector_index_service.reindex_sparse_vectors()
+            logger.info(f"Schema 迁移后重索引完成，{count} 条文档已补充稀疏向量")
+        except Exception as e:
+            logger.warning(f"重索引失败（可稍后手动触发）: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -27,16 +76,20 @@ async def lifespan(app: FastAPI):
     logger.info(f"📝 环境: {'开发' if config.debug else '生产'}")
     logger.info(f"🌐 监听地址: http://{config.host}:{config.port}")
     logger.info(f"📚 API 文档: http://{config.host}:{config.port}/docs")
-    
+
     # 连接 Milvus
     logger.info("🔌 正在连接 Milvus...")
     milvus_manager.connect()
     logger.info("✅ Milvus 连接成功")
-    
+
+    # 初始化 BM25 混合检索
+    if config.hybrid_search_enabled:
+        _initialize_bm25()
+
     logger.info("=" * 60)
-    
+
     yield
-    
+
     # 关闭时执行
     logger.info("🔌 正在关闭 Milvus 连接...")
     milvus_manager.close()

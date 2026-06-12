@@ -9,6 +9,7 @@ from loguru import logger
 from app.services.document_splitter_service import document_splitter_service
 from app.services.file_handlers.registry import get_handler_for_file
 from app.services.vector_store_manager import vector_store_manager
+from app.core.milvus_client import milvus_manager
 
 
 class IndexingResult:
@@ -179,6 +180,50 @@ class VectorIndexService:
         except Exception as e:
             logger.error(f"索引文件失败: {file_path}, 错误: {e}")
             raise RuntimeError(f"索引文件失败: {e}") from e
+
+    def reindex_sparse_vectors(self) -> int:
+        """为 Milvus 中所有现有文档重新计算并写入 BM25 稀疏向量。
+
+        Schema 迁移后或 BM25 模型重新拟合后调用。分批处理避免
+        内存溢出。
+
+        Returns:
+            int: 成功更新的文档数
+        """
+        from app.services.bm25_embedding_service import bm25_embedding_service
+
+        if not bm25_embedding_service.is_fitted:
+            raise RuntimeError("BM25 模型未拟合，无法重索引稀疏向量")
+
+        collection = milvus_manager.get_collection()
+        count = 0
+        batch_size = 500
+        offset = 0
+
+        logger.info("开始重索引稀疏向量...")
+        while True:
+            results = collection.query(
+                expr="",
+                output_fields=["id", "content"],
+                limit=batch_size,
+                offset=offset,
+            )
+            if not results:
+                break
+
+            texts = [r["content"] for r in results]
+            sparse_vecs = bm25_embedding_service.encode_documents(texts)
+            entities = [
+                {"id": r["id"], "sparse_vector": sv}
+                for r, sv in zip(results, sparse_vecs)
+            ]
+            collection.upsert(entities)
+            count += len(entities)
+            offset += batch_size
+            logger.debug(f"重索引进度: {count} 条")
+
+        logger.info(f"重索引稀疏向量完成，共 {count} 条")
+        return count
 
 
 # 全局单例

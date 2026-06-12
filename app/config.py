@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     rag_score_threshold: float = 0.5
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
 
+    # Hybrid search 配置
+    hybrid_search_enabled: bool = True
+    hybrid_dense_top_k: int = 10
+    hybrid_sparse_top_k: int = 10
+    hybrid_rrf_k: int = 60
+    hybrid_final_top_k: int = 10
+
     # Rerank 配置
     rerank_enabled: bool = True
     rerank_model: str = "qwen3-rerank"
@@ -61,7 +68,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_chat: str = "10/minute"
     rate_limit_chat_stream: str = "5/minute"
-    rate_limit_aiops: str = "3/minute"
+    rate_limit_aiops: str = "5/minute"
     rate_limit_upload: str = "20/minute"
     rate_limit_storage_uri: str = "memory://"
     rate_limit_headers_enabled: bool = True

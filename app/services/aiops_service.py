@@ -5,8 +5,7 @@
 
 from typing import AsyncGenerator, Dict, Any
 from langgraph.graph import StateGraph, END
-import sqlite3
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from loguru import logger
 
 from app.agent.aiops import PlanExecuteState, planner, executor, replanner
@@ -22,16 +21,26 @@ class AIOpsService:
     """通用 Plan-Execute-Replan 服务"""
 
     def __init__(self):
-        """初始化服务"""
+        """初始化服务（同步部分）"""
         import os
         from app.config import config
         db_path = config.checkpoint_db_path
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.checkpointer = SqliteSaver(conn)
+        self._db_path = db_path
+        self.checkpointer: AsyncSqliteSaver | None = None
+        self.graph = None
+        logger.info("Plan-Execute-Replan Service 初始化完成（checkpointer 延迟初始化）")
+
+    async def _ensure_checkpointer(self):
+        """异步初始化 checkpointer 和 graph"""
+        if self.graph is not None:
+            return
+        import aiosqlite
+        conn = await aiosqlite.connect(self._db_path)
+        self.checkpointer = AsyncSqliteSaver(conn)
         self.checkpointer.setup()
         self.graph = self._build_graph()
-        logger.info("Plan-Execute-Replan Service 初始化完成")
+        logger.info("AsyncSqliteSaver 和 Graph 初始化完成")
 
     def _build_graph(self): # 核心方法
         """构建 Plan-Execute-Replan 工作流"""
@@ -101,6 +110,8 @@ class AIOpsService:
             Dict[str, Any]: 流式事件
         """
         logger.info(f"[会话 {session_id}] 开始执行任务: {user_input}")
+
+        await self._ensure_checkpointer()
 
         try:
             # 初始化状态

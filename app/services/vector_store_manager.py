@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.config import config
 from app.core.milvus_client import milvus_manager
+from app.services.bm25_embedding_service import bm25_embedding_service
 from app.services.vector_embedding_service import vector_embedding_service
 
 
@@ -91,6 +92,25 @@ class VectorStoreManager:
             # 并进行批量处理，性能更好
             result_ids = self.vector_store.add_documents(documents, ids=ids)
 
+            # 追加 BM25 稀疏向量（用于混合检索）
+            if config.hybrid_search_enabled:
+                # 延迟拟合：首次上传文档时 BM25 可能尚未拟合
+                if not bm25_embedding_service.is_fitted:
+                    self._try_fit_bm25_lazy()
+                if bm25_embedding_service.is_fitted:
+                    try:
+                        texts = [doc.page_content for doc in documents]
+                        sparse_embs = bm25_embedding_service.encode_documents(texts)
+                        collection = milvus_manager.get_collection()
+                        entities = [
+                            {"id": doc_id, "sparse_vector": sparse_vec}
+                            for doc_id, sparse_vec in zip(result_ids, sparse_embs)
+                        ]
+                        collection.upsert(entities)
+                        logger.debug(f"成功追加 {len(entities)} 条 BM25 稀疏向量")
+                    except Exception as e:
+                        logger.warning(f"追加稀疏向量失败（不影响稠密检索）: {e}")
+
             elapsed = time.time() - start_time
             logger.info(
                 f"批量添加 {len(documents)} 个文档到 VectorStore 完成, "
@@ -128,6 +148,34 @@ class VectorStoreManager:
         except Exception as e:
             logger.warning(f"删除旧数据失败 (可能是首次索引): {e}")
             return 0
+
+    def _try_fit_bm25_lazy(self) -> None:
+        """尝试从当前 Milvus 集合中收集语料并拟合 BM25 模型。
+
+        仅在 BM25 尚未拟合时调用，用于首次上传文档后的延迟拟合。
+        """
+        try:
+            collection = milvus_manager.get_collection()
+            batch_size = 500
+            offset = 0
+            corpus: list[str] = []
+            while True:
+                results = collection.query(
+                    expr="",
+                    output_fields=["content"],
+                    limit=batch_size,
+                    offset=offset,
+                )
+                if not results:
+                    break
+                corpus.extend(r["content"] for r in results if r.get("content"))
+                offset += batch_size
+
+            if corpus:
+                bm25_embedding_service.fit(corpus)
+                logger.info(f"BM25 延迟拟合完成，语料大小: {len(corpus)}")
+        except Exception as e:
+            logger.warning(f"BM25 延迟拟合失败: {e}")
 
     def get_vector_store(self) -> Milvus:
         """

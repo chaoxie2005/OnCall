@@ -131,6 +131,49 @@ async def index_directory(directory_path: str = None):
         raise HTTPException(status_code=500, detail=f"索引目录失败: {e}")
 
 
+@router.post("/reindex_sparse")
+async def reindex_sparse_vectors():
+    """为存量文档补充 BM25 稀疏向量（用于启用混合检索后的数据迁移）
+
+    遍历 Milvus 中所有文档，计算 BM25 稀疏向量并通过 upsert 写入。
+    不会重复写入稠密向量，仅更新 sparse_vector 字段。
+
+    Returns:
+        JSONResponse: 重索引结果，包含迁移的文档数量
+    """
+    try:
+        from app.services.bm25_embedding_service import bm25_embedding_service
+        from app.config import config as app_config
+
+        if not app_config.hybrid_search_enabled:
+            return JSONResponse(
+                status_code=400,
+                content={"code": 400, "message": "混合检索未启用，无需重索引"},
+            )
+
+        if not bm25_embedding_service.is_fitted:
+            return JSONResponse(
+                status_code=400,
+                content={"code": 400, "message": "BM25 模型尚未拟合，请先上传文档或等待模型就绪"},
+            )
+
+        logger.info("手动触发稀疏向量重索引...")
+        count = vector_index_service.reindex_sparse_vectors()
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "code": 200,
+                "message": "重索引完成",
+                "data": {"reindexed_count": count},
+            },
+        )
+
+    except Exception as e:
+        logger.error(f"重索引稀疏向量失败: {e}")
+        raise HTTPException(status_code=500, detail=f"重索引失败: {e}")
+
+
 def _get_file_extension(filename: str) -> str:
     """
     获取文件扩展名

@@ -1566,6 +1566,10 @@ class SuperBizAgentApp {
             });
 
             if (!response.ok) {
+                if (response.status === 429) {
+                    const retryAfter = response.headers.get('Retry-After') || '60';
+                    throw new Error(`请求过于频繁，请等待 ${retryAfter} 秒后重试`);
+                }
                 throw new Error(`HTTP错误: ${response.status}`);
             }
 

@@ -51,11 +51,14 @@ class MilvusClientManager:
     CONTENT_MAX_LENGTH: int = 8000
     DEFAULT_SHARD_NUMBER: int = 2
     VECTOR_METRIC_TYPE: str = "COSINE"
+    SPARSE_METRIC_TYPE: str = "IP"
+    SPARSE_INDEX_TYPE: str = "SPARSE_INVERTED_INDEX"
 
     def __init__(self) -> None:
         """初始化 Milvus 客户端管理器"""
         self._client: MilvusClient | None = None
         self._collection: Collection | None = None
+        self._schema_migrated: bool = False
 
     def connect(self) -> MilvusClient:
         """
@@ -99,7 +102,20 @@ class MilvusClientManager:
             else:
                 logger.info(f"collection '{self.COLLECTION_NAME}' 已存在")
                 self._collection = Collection(self.COLLECTION_NAME)
-                
+
+                # 检查 schema 是否包含 sparse_vector 字段
+                schema = self._collection.schema
+                schema_field_names = {f.name for f in schema.fields}
+                if "sparse_vector" not in schema_field_names:
+                    logger.warning(
+                        "检测到旧版 Schema（缺少 sparse_vector 字段），"
+                        "正在删除旧集合并重建..."
+                    )
+                    _ = utility.drop_collection(self.COLLECTION_NAME)
+                    self._create_collection()
+                    self._schema_migrated = True
+                    logger.info("Schema 迁移完成，已添加 sparse_vector 字段")
+
                 # 检查向量维度是否匹配
                 schema = self._collection.schema
                 vector_field = None
@@ -166,6 +182,10 @@ class MilvusClientManager:
                 dim=self.VECTOR_DIM,
             ),
             FieldSchema(
+                name="sparse_vector",
+                dtype=DataType.SPARSE_FLOAT_VECTOR,
+            ),
+            FieldSchema(
                 name="content",
                 dtype=DataType.VARCHAR,
                 max_length=self.CONTENT_MAX_LENGTH,
@@ -194,12 +214,12 @@ class MilvusClientManager:
         self._create_index()
 
     def _create_index(self) -> None:
-        """为 vector 字段创建索引"""
+        """为 vector 和 sparse_vector 字段创建索引"""
         if self._collection is None:
             raise RuntimeError("Collection 未初始化")
 
         index_params = {
-            "metric_type": self.VECTOR_METRIC_TYPE,  # 余弦相似度
+            "metric_type": self.VECTOR_METRIC_TYPE,
             "index_type": "IVF_FLAT",
             "params": {"nlist": 128},
         }
@@ -208,8 +228,17 @@ class MilvusClientManager:
             field_name="vector",
             index_params=index_params,
         )
-
         logger.info("成功为 vector 字段创建索引")
+
+        sparse_index_params = {
+            "metric_type": self.SPARSE_METRIC_TYPE,
+            "index_type": self.SPARSE_INDEX_TYPE,
+        }
+        _ = self._collection.create_index(
+            field_name="sparse_vector",
+            index_params=sparse_index_params,
+        )
+        logger.info("成功为 sparse_vector 字段创建稀疏索引")
 
     def _ensure_index_metric(self) -> None:
         """确保 vector 字段索引使用目标度量类型。"""
@@ -269,6 +298,11 @@ class MilvusClientManager:
         except Exception as e:
             logger.error(f"加载 collection 失败: {e}")
             raise
+
+    @property
+    def schema_migrated(self) -> bool:
+        """Schema 是否在此次启动中被迁移（需要重索引稀疏向量）"""
+        return self._schema_migrated
 
     def get_collection(self) -> Collection:
         """

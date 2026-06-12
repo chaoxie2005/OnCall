@@ -10,6 +10,8 @@ from loguru import logger
 
 from app.config import config
 from app.services.vector_store_manager import vector_store_manager
+from app.services.bm25_embedding_service import bm25_embedding_service
+from app.services.hybrid_search_service import hybrid_search_service
 
 
 def rerank_documents(query: str, docs: List[Document], top_n: int) -> List[Document]:
@@ -79,18 +81,21 @@ def retrieve_knowledge(query: str) -> Tuple[str, List[Document]]:
     """
     try:
         logger.info(f"知识检索工具被调用: query='{query}'")
-        
-        # 从向量存储中检索相关文档
-        vector_store = vector_store_manager.get_vector_store()
-        retriever = vector_store.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs={
-                "k": config.rag_top_k,
-                "score_threshold": config.rag_score_threshold,
-            },
-        )
-        
-        docs = retriever.invoke(query)
+
+        # 混合检索路径：稠密 + BM25 稀疏 → RRF 融合
+        if config.hybrid_search_enabled and bm25_embedding_service.is_fitted:
+            docs = list(hybrid_search_service.search(query))
+        else:
+            # 纯稠密检索路径（兜底）
+            vector_store = vector_store_manager.get_vector_store()
+            retriever = vector_store.as_retriever(
+                search_type="similarity_score_threshold",
+                search_kwargs={
+                    "k": config.rag_top_k,
+                    "score_threshold": config.rag_score_threshold,
+                },
+            )
+            docs = retriever.invoke(query)
 
         if not docs:
             logger.warning("未检索到相关文档")

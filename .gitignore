@@ -53,7 +53,12 @@ logs/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+
+# Backup
+*.bak
 
 # Milvus
 volumes/
