@@ -78,6 +78,11 @@ class Settings(BaseSettings):
     mcp_cls_url: str = "http://localhost:8003/mcp"
     mcp_monitor_transport: str = "streamable-http"
     mcp_monitor_url: str = "http://localhost:8004/mcp"
+    mcp_amap_transport: str = "streamable-http"
+    mcp_amap_url: str = "http://localhost:8005/mcp"
+
+    # 高德地图 API 配置
+    amap_api_key: str = ""
 
     # Prometheus 配置
     prometheus_base_url: str = "http://localhost:9090"
@@ -87,7 +92,7 @@ class Settings(BaseSettings):
     @property
     def mcp_servers(self) -> Dict[str, Dict[str, Any]]:
         """获取完整的 MCP 服务器配置"""
-        return {
+        servers = {
             "cls": {
                 "transport": self.mcp_cls_transport,
                 "url": self.mcp_cls_url,
@@ -95,8 +100,15 @@ class Settings(BaseSettings):
             "monitor": {
                 "transport": self.mcp_monitor_transport,
                 "url": self.mcp_monitor_url,
-            }
+            },
         }
+        # 仅在配置了 amap_api_key 时注册高德地图 MCP 服务
+        if self.amap_api_key:
+            servers["amap"] = {
+                "transport": self.mcp_amap_transport,
+                "url": self.mcp_amap_url,
+            }
+        return servers
 
 
 # 全局配置实例

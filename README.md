@@ -14,9 +14,11 @@
 - **RAG 问答** — 上传运维文档后，Agent 基于文档回答问题，问不到的内容拒绝编造。
 - **AIOps 诊断** — 给定一个告警，Agent 自动制定排查计划、调用工具搜索日志和监控数据、输出诊断报告。
 
-Web 界面长这样（对话页 + 诊断页）：
+### 界面一览
 
-![screenshot](static/screenshot.png)
+| 首页对话 | 高德地图 MCP | 腾讯云 CLS MCP | AIOps 诊断 |
+|---|---|---|---|
+| ![首页](static/imgs/homepage.png) | ![高德地图](static/imgs/amap-mcp.png) | ![CLS](static/imgs/cls-mcp.png) | ![AIOps](static/imgs/aiops-diagnosis.png) |
 
 ## 技术选型 & 踩过的坑
 
@@ -25,7 +27,7 @@ Web 界面长这样（对话页 + 诊断页）：
 | 框架 | FastAPI + SSE | 诊断流程可能要跑几十秒，必须流式输出，不能让前端干等。 |
 | 模型 | Qwen-Max (DashScope) | OpenAI 兼容协议，切模型不需要改代码。温度设 0.7，诊断时降为 0 降低幻觉。 |
 | Agent 编排 | LangGraph | 最开始用 LangChain 的 AgentExecutor，发现工具调用失败后不会重试，排查流程没法中途调整。换了 LangGraph 的状态图，Plan → Execute → Replan 三阶段，每一步都能 inspect。 |
-| 工具协议 | MCP (Model Context Protocol) | 工具和 Agent 之间用 MCP 解耦。日志查询服务、监控服务各自是独立的 MCP Server，Agent 通过 MCP Client 调用。后面换了监控数据源，Agent 代码一行没改。 |
+| 工具协议 | MCP (Model Context Protocol) | 工具和 Agent 之间用 MCP 解耦。CLS 日志查询、Monitor 监控、高德地图各自是独立的 MCP Server，Agent 通过 MCP Client 调用。后面换数据源，Agent 代码不用改。 |
 | 向量库 | Milvus 2.3+ | 支持稠密+稀疏混合检索。一开始只用了 COSINE 相似度，发现关键词匹配场景（比如搜 "CPU 100%"）效果不好，补了 BM25 稀疏向量做 RRF 融合。 |
 | 重排序 | qwen3-rerank | 粗排召回 10 条 → 精排取 Top 3。相似度 < 0.5 的直接丢弃，避免拿不相关文档去问模型。重排服务挂了有降级：单文档跳过 → API 异常回退 → 全局开关关闭。 |
 | 会话存储 | SQLite (AsyncSqliteSaver) | 最早用 MemorySaver，服务重启对话全丢。迁移到 SqliteSaver 后会话持久化，`data/oncall_sessions.db` 一个文件搞定。 |
@@ -71,10 +73,12 @@ OnCall/
 ├── static/                            # 前端：纯 HTML + vanilla JS + CSS
 │   ├── index.html
 │   ├── app.js
-│   └── styles.css
+│   ├── styles.css
+│   └── imgs/                           #   界面截图
 ├── mcp_servers/                       # MCP 工具服务（独立进程）
 │   ├── cls_server.py                  #   日志查询服务 (FastMCP)
-│   └── monitor_server.py              #   监控数据服务 (Prometheus)
+│   ├── monitor_server.py              #   监控数据服务 (Prometheus)
+│   └── amap_server.py                 #   高德地图服务 (地理编码/路径规划/天气)
 ├── aiops-docs/                        # 运维知识库 Markdown 文档
 ├── data/                              # 运行时数据（SQLite 会话库等）
 ├── logs/                              # Loguru 日志输出
@@ -149,7 +153,10 @@ python mcp_servers/cls_server.py
 # 终端3：启动监控 MCP 服务
 python mcp_servers/monitor_server.py
 
-# 终端4：启动主服务
+# 终端4：启动高德地图 MCP 服务
+python mcp_servers/amap_server.py
+
+# 终端5：启动主服务
 python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
 
 # 上传知识库文档（主服务起来后再跑）
@@ -241,6 +248,10 @@ RATE_LIMIT_UPLOAD=20/minute
 # MCP 服务地址
 MCP_CLS_URL=http://localhost:8003/mcp
 MCP_MONITOR_URL=http://localhost:8004/mcp
+MCP_AMAP_URL=http://localhost:8005/mcp
+
+# 高德地图（前往 https://lbs.amap.com/ 申请 Key）
+AMAP_API_KEY=your-amap-key
 
 # Prometheus
 PROMETHEUS_BASE_URL=http://localhost:9090

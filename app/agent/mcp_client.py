@@ -3,6 +3,11 @@ MCP 客户端管理
 提供全局单例的 MCP 客户端，避免重复初始化
 """
 
+import os
+# 绕过 Windows 系统代理，否则 httpx 会把本地 MCP 请求发到代理 → 502
+for _key in ("NO_PROXY", "no_proxy"):
+    os.environ.setdefault(_key, "localhost,127.0.0.1,::1")
+
 import asyncio
 from typing import Optional, Dict, Any, List
 from langchain_mcp_adapters.client import MultiServerMCPClient

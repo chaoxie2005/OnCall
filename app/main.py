@@ -3,6 +3,16 @@
 主应用程序，配置路由、中间件、静态文件等
 """
 
+# ⚠️ 必须在所有导入之前设置，否则 httpx 会读取 Windows 系统代理
+# 导致本地 MCP 请求被发送到代理服务器 → 502 Bad Gateway
+# 覆盖系统代理设置，直接连接本地服务
+import os
+for _k in ("NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"):
+    if _k.upper().startswith("HTTP"):
+        os.environ[_k] = ""  # 清空代理
+    else:
+        os.environ[_k] = "localhost,127.0.0.1,::1"  # 绕过代理
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

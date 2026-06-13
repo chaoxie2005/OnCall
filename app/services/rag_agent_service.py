@@ -146,16 +146,19 @@ class RagAgentService:
 
         all_tools = list(self.tools)
 
-        # 尝试加载 MCP 工具（如果 MCP 服务不可用，会降级使用基础工具）
-        try:
-            mcp_client = await get_mcp_client_with_retry()
-            mcp_tools = await mcp_client.get_tools()
-            logger.info(f"成功加载 {len(mcp_tools)} 个 MCP 工具")
-            self.mcp_tools = mcp_tools
-            all_tools.extend(mcp_tools)
-        except Exception as e:
-            logger.warning(f"MCP 工具加载失败，使用基础工具继续运行: {e}")
-            self.mcp_tools = []
+        # 逐个服务器加载 MCP 工具，避免单个服务器故障导致全部不可用
+        for server_name, server_config in config.mcp_servers.items():
+            try:
+                mcp_client = await get_mcp_client_with_retry(
+                    servers={server_name: server_config},
+                    force_new=True,
+                )
+                server_tools = await mcp_client.get_tools()
+                self.mcp_tools.extend(server_tools)
+                all_tools.extend(server_tools)
+                logger.info(f"MCP [{server_name}]: 加载 {len(server_tools)} 个工具")
+            except Exception as e:
+                logger.warning(f"MCP [{server_name}]: 加载失败 — {e}")
 
         # 构建中间件列表：压缩中间件（可选）+ 消息修剪（兜底）
         middleware_list = []
