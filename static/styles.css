@@ -1727,3 +1727,527 @@ body {
         margin: 10px;
     }
 }
+
+/* ===== 飞书按钮 ===== */
+.feishu-top-btn {
+    position: absolute;
+    top: 16px;
+    right: 128px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #3370ff;
+    border: none;
+    border-radius: 24px;
+    cursor: pointer;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    z-index: 100;
+    box-shadow: 0 2px 4px rgba(51, 112, 255, 0.3);
+}
+
+.feishu-top-btn:hover {
+    background: #1e5fff;
+    box-shadow: 0 4px 8px rgba(51, 112, 255, 0.4);
+    transform: translateY(-1px);
+}
+
+.feishu-top-btn:active {
+    transform: translateY(0);
+}
+
+.feishu-top-btn svg {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* ===== 飞书模态框 ===== */
+.feishu-modal {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+}
+
+.feishu-modal-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.feishu-modal-dialog {
+    position: relative;
+    background: var(--bg-primary);
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+    animation: feishuSlideIn 0.25s ease;
+}
+
+@keyframes feishuSlideIn {
+    from { opacity: 0; transform: translateY(-20px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.feishu-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px 0;
+}
+
+.feishu-modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.feishu-modal-close {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    padding: 4px;
+    border-radius: 6px;
+    transition: all 0.15s;
+}
+
+.feishu-modal-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.feishu-modal-close svg {
+    width: 20px;
+    height: 20px;
+}
+
+.feishu-modal-body {
+    padding: 16px 24px;
+}
+
+.feishu-form-group {
+    margin-bottom: 14px;
+}
+
+.feishu-form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
+.feishu-chat-display {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 14px;
+    cursor: not-allowed;
+    box-sizing: border-box;
+}
+
+.feishu-tabs {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.feishu-tab {
+    flex: 1;
+    padding: 8px 12px;
+    border: none;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.feishu-tab + .feishu-tab {
+    border-left: 1px solid var(--border-color);
+}
+
+.feishu-tab.active {
+    background: #3370ff;
+    color: #fff;
+}
+
+.feishu-tab-content {
+    margin-top: 12px;
+}
+
+.feishu-tab-content.hidden {
+    display: none;
+}
+
+.feishu-tab-content textarea,
+.feishu-tab-content input,
+.feishu-tab-content select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text-primary);
+    background: var(--bg-primary);
+    outline: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: border-color 0.15s;
+}
+
+.feishu-tab-content textarea:focus,
+.feishu-tab-content input:focus,
+.feishu-tab-content select:focus {
+    border-color: #3370ff;
+    box-shadow: 0 0 0 3px rgba(51, 112, 255, 0.12);
+}
+
+.feishu-tab-content textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.feishu-tab-content input {
+    margin-bottom: 10px;
+}
+
+.feishu-tab-content select {
+    margin-bottom: 10px;
+    cursor: pointer;
+}
+
+.feishu-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 0 24px 20px;
+}
+
+.feishu-modal-status {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.feishu-modal-status.error { color: #ea4335; }
+.feishu-modal-status.success { color: #34a853; }
+.feishu-modal-status.info { color: #1a73e8; }
+
+.feishu-cancel-btn {
+    padding: 8px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.feishu-cancel-btn:hover {
+    background: var(--bg-secondary);
+}
+
+.feishu-send-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 20px;
+    border: none;
+    border-radius: 8px;
+    background: #3370ff;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.feishu-send-btn:hover {
+    background: #1e5fff;
+}
+
+.feishu-send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.feishu-send-btn svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* ===== 飞书模态框标签导航 ===== */
+.feishu-modal-header-left {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.feishu-modal-header-left h3 {
+    margin: 0;
+    white-space: nowrap;
+}
+
+.feishu-tab-nav {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: 3px;
+}
+
+.feishu-nav-tab {
+    padding: 6px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.feishu-nav-tab.active {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-weight: 500;
+    box-shadow: var(--shadow-xs);
+}
+
+.feishu-nav-tab:hover:not(.active) {
+    color: var(--text-primary);
+}
+
+/* ===== 飞书面板切换 ===== */
+.feishu-panel {
+    display: none;
+}
+
+.feishu-panel.active {
+    display: block;
+}
+
+/* ===== 告警监控面板 ===== */
+.alert-monitor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.alert-monitor-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* 开关 */
+.alert-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    cursor: pointer;
+}
+
+.alert-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.alert-toggle-slider {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border-color);
+    border-radius: 24px;
+    transition: 0.2s;
+}
+
+.alert-toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: 0.2s;
+}
+
+.alert-toggle input:checked + .alert-toggle-slider {
+    background: #34a853;
+}
+
+.alert-toggle input:checked + .alert-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+.alert-monitor-info {
+    display: flex;
+    gap: 16px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.alert-monitor-section {
+    margin-bottom: 14px;
+}
+
+.alert-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.alert-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #ea4335;
+    border-radius: 10px;
+}
+
+.alert-list, .alert-history-list {
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.alert-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 13px;
+    padding: 16px;
+}
+
+.alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    border-left: 3px solid transparent;
+}
+
+.alert-item.alert-warning {
+    background: rgba(251, 188, 4, 0.08);
+    border-left-color: #fbbc04;
+}
+
+.alert-item.alert-error {
+    background: rgba(234, 67, 53, 0.08);
+    border-left-color: #ea4335;
+}
+
+.alert-item.alert-critical {
+    background: rgba(171, 71, 188, 0.08);
+    border-left-color: #ab47bc;
+}
+
+.alert-item-icon {
+    font-size: 16px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.alert-item-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.alert-item-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.alert-item-instance {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.alert-history-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    font-size: 12px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.alert-history-action {
+    flex-shrink: 0;
+}
+
+.alert-history-name {
+    flex: 1;
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.alert-history-time {
+    color: var(--text-secondary);
+    font-size: 11px;
+}
+
+.alert-pushed-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(52, 168, 83, 0.12);
+    color: #34a853;
+    white-space: nowrap;
+}
+
+.alert-fail-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(234, 67, 53, 0.12);
+    color: #ea4335;
+    white-space: nowrap;
+}

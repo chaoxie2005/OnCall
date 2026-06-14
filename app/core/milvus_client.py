@@ -265,7 +265,7 @@ class MilvusClientManager:
             "将重建 vector 索引。"
         )
         self._collection.release()
-        self._collection.drop_index()
+        self._collection.drop_index(index_name="vector")
         self._create_index()
 
     def _load_collection(self) -> None:

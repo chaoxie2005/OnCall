@@ -133,14 +133,21 @@ echo [成功] Monitor MCP 服务已启动
 echo.
 
 REM 启动 AMap MCP 服务
-echo [7/8] 启动 AMap MCP 服务...
+echo [7/10] 启动 AMap MCP 服务...
 start "AMap MCP Server" /min %PYTHON_CMD% mcp_servers/amap_server.py
 timeout /t 2 /nobreak >nul
 echo [成功] AMap MCP 服务已启动
 echo.
 
+REM 启动 Feishu MCP 服务 (Node.js)
+echo [8/10] 启动飞书 MCP 服务...
+start "Feishu MCP Server" /min npx -y @larksuiteoapi/lark-mcp mcp --config mcp_servers\feishu_config.json
+timeout /t 3 /nobreak >nul
+echo [成功] 飞书 MCP 服务已启动
+echo.
+
 REM 启动 FastAPI 服务
-echo [8/9] 启动 FastAPI 服务...
+echo [9/10] 启动 FastAPI 服务...
 start "SuperBizAgent API" %PYTHON_CMD% -m uvicorn app.main:app --host 0.0.0.0 --port 9900
 echo [信息] 等待服务启动（15秒）...
 timeout /t 15 /nobreak >nul
@@ -157,7 +164,7 @@ if errorlevel 1 (
     echo.
     
     REM 调用 API 上传 aiops-docs 文档到向量数据库
-    echo [9/9] 上传文档到向量数据库...
+    echo [10/10] 上传文档到向量数据库...
     for %%f in (aiops-docs\*.md) do (
         echo   上传: %%~nxf
         curl -s -X POST http://localhost:9900/api/upload -F "file=@%%f" >nul 2>&1
@@ -176,6 +183,7 @@ echo 查看日志:
 echo   - FastAPI: logs\app_*.log（Loguru 日志，按天轮转）
 echo   - CLS MCP: type mcp_cls.log
 echo   - Monitor: type mcp_monitor.log
+echo   - Feishu MCP: 查看控制台输出（Node.js MCP 服务）
 echo 停止服务: stop-windows.bat
 echo ====================================
 pause

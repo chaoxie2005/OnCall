@@ -22,7 +22,7 @@ import os
 
 from app.config import config
 from loguru import logger
-from app.api import chat, health, file, aiops
+from app.api import chat, health, file, aiops, feishu, alerts
 from app.core.milvus_client import milvus_manager
 from app.core.rate_limiter import limiter
 from slowapi.errors import RateLimitExceeded
@@ -96,9 +96,22 @@ async def lifespan(app: FastAPI):
     if config.hybrid_search_enabled:
         _initialize_bm25()
 
+    # 启动后台告警监控
+    import asyncio as _asyncio
+    from app.services.alert_monitor import alert_monitor_loop
+    _alert_task = _asyncio.create_task(alert_monitor_loop())
+    logger.info("告警监控后台任务已启动")
+
     logger.info("=" * 60)
 
     yield
+
+    # 关闭后台任务
+    _alert_task.cancel()
+    try:
+        await _alert_task
+    except _asyncio.CancelledError:
+        pass
 
     # 关闭时执行
     logger.info("🔌 正在关闭 Milvus 连接...")
@@ -148,6 +161,8 @@ app.include_router(health.router, tags=["健康检查"])
 app.include_router(chat.router, prefix="/api", tags=["对话"])
 app.include_router(file.router, prefix="/api", tags=["文件管理"])
 app.include_router(aiops.router, prefix="/api", tags=["AIOps智能运维"])
+app.include_router(feishu.router, prefix="/api", tags=["飞书消息"])
+app.include_router(alerts.router, prefix="/api", tags=["告警监控"])
 
 # 挂载静态文件
 static_dir = "static"

@@ -203,6 +203,7 @@ class SuperBizAgentApp {
         this.sidebar = document.querySelector('.sidebar');
         this.newChatBtn = document.getElementById('newChatBtn');
         this.aiOpsSidebarBtn = document.getElementById('aiOpsSidebarBtn');
+        this.feishuBtn = document.getElementById('feishuBtn');
         this.hamburgerBtn = document.getElementById('hamburgerBtn');
 
         // 移动端侧边栏遮罩
@@ -250,6 +251,11 @@ class SuperBizAgentApp {
         // AI Ops按钮
         if (this.aiOpsSidebarBtn) {
             this.aiOpsSidebarBtn.addEventListener('click', () => this.triggerAIOps());
+        }
+
+        // 飞书按钮
+        if (this.feishuBtn) {
+            this.feishuBtn.addEventListener('click', () => this.openFeishuModal());
         }
         
         // 模式选择下拉菜单
@@ -2037,6 +2043,221 @@ class SuperBizAgentApp {
                 // 恢复页面滚动
                 document.body.style.overflow = '';
             }
+        }
+    }
+
+    // ── 飞书消息发送 ──
+
+    openFeishuModal() {
+        const modal = document.getElementById('feishuModal');
+        if (modal) modal.style.display = 'flex';
+        this._bindFeishuEvents();
+        this._refreshAlertPanel();
+    }
+
+    closeFeishuModal() {
+        const modal = document.getElementById('feishuModal');
+        if (modal) modal.style.display = 'none';
+        this._resetFeishuStatus();
+    }
+
+    _bindFeishuEvents() {
+        const close = document.getElementById('feishuModalClose');
+        const cancel = document.getElementById('feishuCancelBtn');
+        const send = document.getElementById('feishuSendBtn');
+        const backdrop = document.getElementById('feishuModalBackdrop');
+        const navTabs = document.querySelectorAll('.feishu-nav-tab');
+        const msgTabs = document.querySelectorAll('.feishu-tab');
+        const alertToggle = document.getElementById('alertToggle');
+
+        // 解绑并重新绑定以避免重复
+        [close, cancel, send, ...navTabs, ...msgTabs].forEach(el => {
+            if (!el) return;
+            const clone = el.cloneNode(true);
+            el.parentNode.replaceChild(clone, el);
+        });
+
+        document.getElementById('feishuModalClose').addEventListener('click', () => this.closeFeishuModal());
+        document.getElementById('feishuCancelBtn').addEventListener('click', () => this.closeFeishuModal());
+        backdrop.addEventListener('click', () => this.closeFeishuModal());
+        document.getElementById('feishuSendBtn').addEventListener('click', () => this._sendFeishuMessage());
+
+        document.querySelectorAll('.feishu-nav-tab').forEach(tab => {
+            tab.addEventListener('click', () => this._switchFeishuPanel(tab.dataset.panel));
+        });
+
+        document.querySelectorAll('.feishu-tab').forEach(tab => {
+            tab.addEventListener('click', () => this._switchFeishuTab(tab.dataset.tab));
+        });
+
+        // 告警开关
+        if (alertToggle) {
+            alertToggle.addEventListener('change', () => this._toggleAlertMonitor(alertToggle.checked));
+        }
+
+        // 回车发送
+        const textInput = document.getElementById('feishuTextInput');
+        if (textInput) {
+            textInput.onkeydown = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    this._sendFeishuMessage();
+                }
+            };
+        }
+    }
+
+    _switchFeishuPanel(panel) {
+        document.querySelectorAll('.feishu-nav-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`.feishu-nav-tab[data-panel="${panel}"]`).classList.add('active');
+        document.getElementById('feishuSendPanel').classList.toggle('active', panel === 'send');
+        document.getElementById('feishuAlertsPanel').classList.toggle('active', panel === 'alerts');
+        if (panel === 'alerts') this._refreshAlertPanel();
+    }
+
+    _switchFeishuTab(tab) {
+        document.querySelectorAll('.feishu-tab').forEach(t => t.classList.remove('active'));
+        document.querySelector(`.feishu-tab[data-tab="${tab}"]`).classList.add('active');
+        document.getElementById('tabText').classList.toggle('hidden', tab !== 'text');
+        document.getElementById('tabCard').classList.toggle('hidden', tab !== 'card');
+    }
+
+    _resetFeishuStatus() {
+        const status = document.getElementById('feishuStatus');
+        if (status) { status.textContent = ''; status.className = 'feishu-modal-status'; }
+        const sendBtn = document.getElementById('feishuSendBtn');
+        if (sendBtn) sendBtn.disabled = false;
+    }
+
+    async _sendFeishuMessage() {
+        const activeTab = document.querySelector('.feishu-tab.active');
+        if (!activeTab) return;
+        const mode = activeTab.dataset.tab;
+        const status = document.getElementById('feishuStatus');
+        const sendBtn = document.getElementById('feishuSendBtn');
+
+        let url, body;
+        if (mode === 'text') {
+            const text = document.getElementById('feishuTextInput').value.trim();
+            if (!text) { this._setFeishuStatus('请输入消息内容', 'error'); return; }
+            url = `${this.apiBaseUrl}/feishu/send`;
+            body = JSON.stringify({ text });
+        } else {
+            const title = document.getElementById('feishuCardTitle').value.trim();
+            const content = document.getElementById('feishuCardContent').value.trim();
+            const level = document.getElementById('feishuCardLevel').value;
+            if (!title || !content) { this._setFeishuStatus('请填写标题和内容', 'error'); return; }
+            url = `${this.apiBaseUrl}/feishu/send_card`;
+            body = JSON.stringify({ title, content, level });
+        }
+
+        sendBtn.disabled = true;
+        this._setFeishuStatus('发送中...', 'info');
+
+        try {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body,
+            });
+            if (resp.ok) {
+                this._setFeishuStatus('发送成功', 'success');
+                this.showNotification('已发送到飞书群', 'success');
+                setTimeout(() => this.closeFeishuModal(), 1200);
+            } else {
+                const err = await resp.json();
+                this._setFeishuStatus(err.detail || '发送失败', 'error');
+            }
+        } catch (e) {
+            this._setFeishuStatus('网络错误: ' + e.message, 'error');
+        } finally {
+            sendBtn.disabled = false;
+        }
+    }
+
+    _setFeishuStatus(msg, type) {
+        const status = document.getElementById('feishuStatus');
+        if (status) { status.textContent = msg; status.className = `feishu-modal-status ${type}`; }
+    }
+
+    // ── 告警监控 ──
+
+    async _refreshAlertPanel() {
+        try {
+            const resp = await fetch(`${this.apiBaseUrl}/alerts/status`);
+            const data = await resp.json();
+            const d = data.data || {};
+            this._renderAlertStatus(d);
+        } catch (e) {
+            console.error('获取告警状态失败:', e);
+        }
+    }
+
+    _renderAlertStatus(data) {
+        // 更新监控信息
+        const info = document.getElementById('alertMonitorInfo');
+        if (info) {
+            info.innerHTML = `<span>状态: ${data.enabled ? '🟢 运行中' : '⏸️ 已暂停'}</span>
+                <span>间隔: ${data.check_interval || 60}s</span>
+                <span>上次检查: ${data.last_check || '-'}</span>`;
+        }
+
+        // 更新开关
+        const toggle = document.getElementById('alertToggle');
+        if (toggle) toggle.checked = data.enabled;
+
+        // 当前告警列表
+        const alerts = data.current_alerts || [];
+        const badge = document.getElementById('alertCountBadge');
+        if (badge) { badge.textContent = alerts.length; badge.style.display = alerts.length ? '' : 'none'; }
+
+        const alertList = document.getElementById('currentAlertList');
+        if (alertList) {
+            if (alerts.length === 0) {
+                alertList.innerHTML = '<div class="alert-empty">✅ 暂无活跃告警</div>';
+            } else {
+                alertList.innerHTML = alerts.map(a => `
+                    <div class="alert-item alert-${a.severity || 'warning'}">
+                        <span class="alert-item-icon">${a.severity === 'critical' ? '🟣' : a.severity === 'error' ? '🔴' : '⚠️'}</span>
+                        <div class="alert-item-body">
+                            <div class="alert-item-name">${a.alertname}</div>
+                            <div class="alert-item-instance">${a.instance || ''} · ${a.description || ''}</div>
+                        </div>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // 历史记录
+        const history = data.history || [];
+        const historyList = document.getElementById('alertHistoryList');
+        if (historyList) {
+            if (history.length === 0) {
+                historyList.innerHTML = '<div class="alert-empty">暂无记录</div>';
+            } else {
+                historyList.innerHTML = history.reverse().slice(0, 10).map(h => `
+                    <div class="alert-history-item">
+                        <span class="alert-history-action">${h.action === 'firing' ? '🚨' : '✅'}</span>
+                        <span class="alert-history-name">${h.alertname}</span>
+                        <span class="alert-history-time">${h.time}</span>
+                        ${h.pushed ? '<span class="alert-pushed-badge">已推送</span>' : '<span class="alert-fail-badge">推送失败</span>'}
+                    </div>
+                `).join('');
+            }
+        }
+    }
+
+    async _toggleAlertMonitor(enabled) {
+        try {
+            await fetch(`${this.apiBaseUrl}/alerts/toggle`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            this.showNotification(`告警监控已${enabled ? '启用' : '暂停'}`, enabled ? 'success' : 'info');
+            this._refreshAlertPanel();
+        } catch (e) {
+            this.showNotification('操作失败: ' + e.message, 'error');
         }
     }
 }

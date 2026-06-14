@@ -121,6 +121,70 @@ class VectorStoreManager:
             logger.error(f"添加文档失败: {e}")
             raise
 
+    def get_chunks_by_source(self, file_path: str) -> list[dict]:
+        """查询指定文件的所有现有分片元数据
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            list[dict]: 现有分片列表，每项含 id / chunk_hash / chunk_index
+        """
+        try:
+            collection = milvus_manager.get_collection()
+            expr = f'metadata["_source"] == "{file_path}"'
+            results: list[dict] = []
+
+            batch_size = 500
+            offset = 0
+            while True:
+                batch = collection.query(
+                    expr=expr,
+                    output_fields=["id", "content", "metadata"],
+                    limit=batch_size,
+                    offset=offset,
+                )
+                if not batch:
+                    break
+                for row in batch:
+                    meta = row.get("metadata", {}) or {}
+                    results.append({
+                        "id": row["id"],
+                        "chunk_hash": meta.get("_chunk_hash", ""),
+                        "chunk_index": meta.get("_chunk_index", -1),
+                    })
+                offset += batch_size
+
+            logger.debug(f"查询到 {len(results)} 个现有分片: {file_path}")
+            return results
+
+        except Exception as e:
+            logger.warning(f"查询现有分片失败: {e}")
+            return []
+
+    def delete_by_ids(self, ids: list[str]) -> int:
+        """按主键 ID 批量删除分片
+
+        Args:
+            ids: 要删除的分片 ID 列表
+
+        Returns:
+            int: 删除的文档数量
+        """
+        if not ids:
+            return 0
+        try:
+            collection = milvus_manager.get_collection()
+            ids_str = ", ".join(f'"{id_}"' for id_ in ids)
+            expr = f"id in [{ids_str}]"
+            result = collection.delete(expr)
+            deleted_count = result.delete_count if hasattr(result, "delete_count") else 0
+            logger.info(f"按 ID 批量删除完成: {deleted_count}/{len(ids)} 个分片")
+            return deleted_count
+        except Exception as e:
+            logger.warning(f"按 ID 删除分片失败: {e}")
+            return 0
+
     def delete_by_source(self, file_path: str) -> int:
         """
         删除指定文件的所有文档
@@ -134,17 +198,17 @@ class VectorStoreManager:
         try:
             # 使用 milvus_manager 获取已连接的 collection
             collection = milvus_manager.get_collection()
-            
+
             # metadata 是 JSON 字段，使用 JSON 路径查询语法
             # _source 是文档的来源文件路径
             expr = f'metadata["_source"] == "{file_path}"'
-            
+
             result = collection.delete(expr)
             deleted_count = result.delete_count if hasattr(result, "delete_count") else 0
-            
+
             logger.info(f"删除文件旧数据: {file_path}, 删除数量: {deleted_count}")
             return deleted_count
-            
+
         except Exception as e:
             logger.warning(f"删除旧数据失败 (可能是首次索引): {e}")
             return 0

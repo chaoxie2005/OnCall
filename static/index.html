@@ -54,6 +54,13 @@
                 </svg>
                 <span>AI Ops</span>
             </button>
+            <button class="feishu-top-btn" id="feishuBtn">
+                <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 22C17.5228 22 22 17.5228 22 12C22 6.47715 17.5228 2 12 2C6.47715 2 2 6.47715 2 12C2 13.5997 2.37562 15.1116 3.04346 16.4525C3.22094 16.8088 3.28001 17.2161 3.17712 17.6006L2.58151 19.8267C2.32295 20.793 3.20701 21.677 4.17335 21.4185L6.39939 20.8229C6.78393 20.72 7.19121 20.7791 7.54753 20.9565C8.88837 21.6244 10.4003 22 12 22Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+                    <path d="M8 10L12 14L16 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span>飞书</span>
+            </button>
             <div class="chat-container">
                 <div class="drop-overlay" id="dropOverlay">
                     <div class="drop-overlay-content">
@@ -139,6 +146,97 @@
             <div class="loading-spinner"></div>
             <div class="loading-text">智能运维分析中，请稍候...</div>
             <div class="loading-subtext">后端正在处理，请耐心等待</div>
+        </div>
+    </div>
+
+    <!-- 飞书消息发送模态框 -->
+    <div id="feishuModal" class="feishu-modal">
+        <div class="feishu-modal-backdrop" id="feishuModalBackdrop"></div>
+        <div class="feishu-modal-dialog">
+            <div class="feishu-modal-header">
+                <div class="feishu-modal-header-left">
+                    <h3>飞书群消息</h3>
+                    <div class="feishu-tab-nav">
+                        <button class="feishu-nav-tab active" data-panel="send">发送消息</button>
+                        <button class="feishu-nav-tab" data-panel="alerts">告警监控</button>
+                    </div>
+                </div>
+                <button class="feishu-modal-close" id="feishuModalClose">
+                    <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- 发送消息面板 -->
+            <div class="feishu-panel active" id="feishuSendPanel">
+                <div class="feishu-modal-body">
+                    <div class="feishu-form-group">
+                        <label>目标群聊</label>
+                        <input type="text" value="chase (oc_1e24a302...)" disabled class="feishu-chat-display">
+                    </div>
+                    <div class="feishu-form-group">
+                        <label>消息类型</label>
+                        <div class="feishu-tabs">
+                            <button class="feishu-tab active" data-tab="text">文本消息</button>
+                            <button class="feishu-tab" data-tab="card">卡片消息</button>
+                        </div>
+                    </div>
+                    <div class="feishu-tab-content" id="tabText">
+                        <textarea id="feishuTextInput" placeholder="输入消息内容..." maxlength="15000" rows="4"></textarea>
+                    </div>
+                    <div class="feishu-tab-content hidden" id="tabCard">
+                        <input type="text" id="feishuCardTitle" placeholder="卡片标题" maxlength="200">
+                        <select id="feishuCardLevel">
+                            <option value="info">ℹ️ 信息 (info)</option>
+                            <option value="warning" selected>⚠️ 警告 (warning)</option>
+                            <option value="error">🔴 错误 (error)</option>
+                            <option value="critical">🟣 严重 (critical)</option>
+                        </select>
+                        <textarea id="feishuCardContent" placeholder="卡片内容（支持 Markdown）" rows="5"></textarea>
+                    </div>
+                </div>
+                <div class="feishu-modal-footer">
+                    <span class="feishu-modal-status" id="feishuStatus"></span>
+                    <button class="feishu-cancel-btn" id="feishuCancelBtn">取消</button>
+                    <button class="feishu-send-btn" id="feishuSendBtn">
+                        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M22 2L11 13M22 2L15 22L11 13M22 2L2 9L11 13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        发送
+                    </button>
+                </div>
+            </div>
+
+            <!-- 告警监控面板 -->
+            <div class="feishu-panel" id="feishuAlertsPanel">
+                <div class="feishu-modal-body">
+                    <div class="alert-monitor-header">
+                        <div class="alert-monitor-title">自动告警监控</div>
+                        <label class="alert-toggle">
+                            <input type="checkbox" id="alertToggle" checked>
+                            <span class="alert-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="alert-monitor-info" id="alertMonitorInfo">
+                        <span>状态: 运行中</span>
+                        <span>检查间隔: 60s</span>
+                        <span>上次检查: -</span>
+                    </div>
+                    <div class="alert-monitor-section">
+                        <div class="alert-section-title">当前活跃告警 <span class="alert-count-badge" id="alertCountBadge">0</span></div>
+                        <div class="alert-list" id="currentAlertList">
+                            <div class="alert-empty">暂无活跃告警</div>
+                        </div>
+                    </div>
+                    <div class="alert-monitor-section">
+                        <div class="alert-section-title">最近告警记录</div>
+                        <div class="alert-history-list" id="alertHistoryList">
+                            <div class="alert-empty">暂无记录</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

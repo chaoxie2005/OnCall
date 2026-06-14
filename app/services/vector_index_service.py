@@ -1,5 +1,6 @@
 """向量索引服务模块"""
 
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -140,7 +141,8 @@ class VectorIndexService:
 
     def index_single_file(self, file_path: str):
         """
-        索引单个文件 (使用新的 LangChain 分割器)
+        索引单个文件，支持增量更新：对每个分片计算 MD5 hash，
+        与 Milvus 中已有分片比对，只对变更分片重新嵌入，未变更分片复用旧向量。
 
         Args:
             file_path: 文件路径
@@ -157,29 +159,99 @@ class VectorIndexService:
         logger.info(f"开始索引文件: {path}")
 
         try:
-            # 1. 使用文件处理器提取文本（自动适配 pdf/docx/txt/md 等格式）
+            # 1. 提取文本
             handler = get_handler_for_file(str(path))
             content = handler.extract_text(str(path))
-            logger.info(f"读取文件: {path}, 处理器: {handler.__class__.__name__}, 内容长度: {len(content)} 字符")
-
-            # 2. 删除该文件的旧数据（如果存在）
             normalized_path = path.as_posix()
-            vector_store_manager.delete_by_source(normalized_path)
+            logger.info(
+                f"读取文件: {path}, 处理器: {handler.__class__.__name__}, "
+                f"内容长度: {len(content)} 字符"
+            )
 
-            # 3. 使用新的文档分割器
+            # 2. 分片
             documents = document_splitter_service.split_document(content, normalized_path)
             logger.info(f"文档分割完成: {file_path} -> {len(documents)} 个分片")
 
-            # 4. 添加文档到向量存储
-            if documents:
-                vector_store_manager.add_documents(documents)
-                logger.info(f"文件索引完成: {file_path}, 共 {len(documents)} 个分片")
-            else:
+            if not documents:
                 logger.warning(f"文件内容为空或无法分割: {file_path}")
+                if normalized_path:
+                    _ = vector_store_manager.delete_by_source(normalized_path)
+                return
+
+            # 3. 为每个分片添加 hash 和序号
+            for i, doc in enumerate(documents):
+                doc.metadata["_chunk_hash"] = hashlib.md5(
+                    doc.page_content.encode("utf-8")
+                ).hexdigest()
+                doc.metadata["_chunk_index"] = i
+
+            # 4. 查询旧分片，比对 hash
+            old_chunks = vector_store_manager.get_chunks_by_source(normalized_path)
+            old_hash_to_id: dict[str, str] = {
+                c["chunk_hash"]: c["id"]
+                for c in old_chunks
+                if c["chunk_hash"]
+            }
+
+            # 旧分片存在但缺少 _chunk_hash 元数据 → 无法增量比对，回退全量替换
+            if old_chunks and not old_hash_to_id:
+                logger.info("旧分片无 hash 元数据（历史数据），回退到全量替换")
+                vector_store_manager.delete_by_source(normalized_path)
+                vector_store_manager.add_documents(documents)
+                logger.info(f"全量索引完成: {file_path}, 共 {len(documents)} 个分片")
+                return
+
+            new_hashes = {doc.metadata["_chunk_hash"] for doc in documents}
+            old_hashes = set(old_hash_to_id.keys())
+
+            unchanged_hashes = new_hashes & old_hashes
+            stale_hashes = old_hashes - new_hashes
+            changed_docs = [
+                doc for doc in documents
+                if doc.metadata["_chunk_hash"] not in unchanged_hashes
+            ]
+            stale_ids = [old_hash_to_id[h] for h in stale_hashes]
+
+            logger.info(
+                f"增量分析: 总分片={len(documents)}, 未变更={len(unchanged_hashes)}, "
+                f"新增/变更={len(changed_docs)}, 待删除={len(stale_ids)}"
+            )
+
+            # 5. 写入变更分片（嵌入稠密+稀疏向量）
+            if changed_docs:
+                vector_store_manager.add_documents(changed_docs)
+                logger.info(f"变更分片已写入: {len(changed_docs)} 个")
+
+            # 6. 删除过时分片
+            if stale_ids:
+                vector_store_manager.delete_by_ids(stale_ids)
+
+            saved_calls = len(documents) - len(changed_docs)
+            if saved_calls > 0:
+                logger.info(
+                    f"增量索引完成: {file_path}, 复用 {saved_calls}/{len(documents)} "
+                    f"个未变更分片，节省 {saved_calls} 次嵌入调用"
+                )
+            else:
+                logger.info(f"文件索引完成: {file_path}, 共 {len(documents)} 个分片")
 
         except Exception as e:
-            logger.error(f"索引文件失败: {file_path}, 错误: {e}")
-            raise RuntimeError(f"索引文件失败: {e}") from e
+            logger.error(f"增量索引失败，尝试全量回退: {file_path}, 错误: {e}")
+            try:
+                # 回退：全量删除 + 全量重新索引
+                path_resolved = Path(file_path).resolve()
+                normalized = path_resolved.as_posix()
+                vector_store_manager.delete_by_source(normalized)
+
+                handler = get_handler_for_file(str(path_resolved))
+                content = handler.extract_text(str(path_resolved))
+                documents = document_splitter_service.split_document(content, normalized)
+                if documents:
+                    vector_store_manager.add_documents(documents)
+                logger.info(f"全量回退索引完成: {file_path}")
+            except Exception as fallback_error:
+                logger.error(f"全量回退索引也失败: {file_path}, 错误: {fallback_error}")
+                raise RuntimeError(f"索引文件失败: {fallback_error}") from fallback_error
 
     def reindex_sparse_vectors(self) -> int:
         """为 Milvus 中所有现有文档重新计算并写入 BM25 稀疏向量。

@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     mcp_monitor_url: str = "http://localhost:8004/mcp"
     mcp_amap_transport: str = "streamable-http"
     mcp_amap_url: str = "http://localhost:8005/mcp"
+    mcp_feishu_transport: str = "streamable-http"
+    mcp_feishu_url: str = "http://localhost:8007/mcp"
 
     # 高德地图 API 配置
     amap_api_key: str = ""
@@ -108,6 +110,11 @@ class Settings(BaseSettings):
                 "transport": self.mcp_amap_transport,
                 "url": self.mcp_amap_url,
             }
+        # 飞书 MCP 服务（始终注册，通过 Node.js 独立进程运行）
+        servers["feishu"] = {
+            "transport": self.mcp_feishu_transport,
+            "url": self.mcp_feishu_url,
+        }
         return servers
 
 

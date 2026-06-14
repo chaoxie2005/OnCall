@@ -46,6 +46,9 @@ poetry.lock
 .env
 .env.local
 
+# MCP config (contains credentials)
+mcp_servers/feishu_config.json
+
 # Logs
 logs/
 *.log

@@ -13,9 +13,50 @@ import logging
 import functools
 import json
 import random
+import socket
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastmcp import FastMCP
+
+
+def _get_host_ip() -> str:
+    """获取本机内网 IP 地址。"""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+_ALERT_SUGGESTIONS = {
+    "cpu": (
+        "1. 使用 `top` / `htop` 查看占用 CPU 最高的进程\n"
+        "2. 检查是否有死循环或异常进程（`ps aux --sort=-%cpu | head -10`）\n"
+        "3. 查看应用日志确认是否有请求量突增\n"
+        "4. 考虑横向扩容或增加 CPU 资源"
+    ),
+    "memory": (
+        "1. 使用 `free -h` 查看内存使用分布\n"
+        "2. 检查是否有内存泄漏（`ps aux --sort=-%mem | head -10`）\n"
+        "3. 查看应用 JVM/进程堆内存配置是否合理\n"
+        "4. 清理缓存或重启异常服务，必要时增加内存"
+    ),
+    "disk": (
+        "1. 使用 `df -h` 查看各分区磁盘使用情况\n"
+        "2. 清理过期日志文件（`find /var/log -name '*.log' -mtime +7 -delete`）\n"
+        "3. 检查是否有大文件可清理（`du -sh /* 2>/dev/null | sort -rh | head -10`）\n"
+        "4. 扩容磁盘或迁移数据到更大卷"
+    ),
+    "prometheus": (
+        "1. 检查 Prometheus 服务是否运行（`systemctl status prometheus`）\n"
+        "2. 确认 Prometheus 端口 9090 是否可达（`telnet <host> 9090`）\n"
+        "3. 查看 Prometheus 自身日志排查启动异常\n"
+        "4. 检查防火墙/安全组是否放通 9090 端口"
+    ),
+}
 
 # 配置日志
 logging.basicConfig(
@@ -248,6 +289,8 @@ def query_cpu_metrics(
 
         return {
             "service_name": service_name,
+            "host_ip": _get_host_ip(),
+            "hostname": socket.gethostname(),
             "metric_name": "cpu_usage_percent",
             "interval": interval,
             "data_points": data_points,
@@ -256,13 +299,14 @@ def query_cpu_metrics(
                 "max": max_value,
                 "min": min_value,
                 "p95": round(sorted(values)[int(len(values) * 0.95)] if len(values) > 1 else max_value, 2),
-                "spike_detected": spike_detected
+                "spike_detected": spike_detected,
             },
             "alert_info": {
                 "triggered": spike_detected,
                 "threshold": 80.0,
-                "message": "CPU 使用率持续超过 80% 阈值" if spike_detected else "CPU 使用率正常"
-            }
+                "message": "CPU 使用率持续超过 80% 阈值" if spike_detected else "CPU 使用率正常",
+                "suggestions": _ALERT_SUGGESTIONS["cpu"],
+            },
         }
     else:
         return {
@@ -401,6 +445,8 @@ def query_memory_metrics(
         
         return {
             "service_name": service_name,
+            "host_ip": _get_host_ip(),
+            "hostname": socket.gethostname(),
             "metric_name": "memory_usage_percent",
             "interval": interval,
             "data_points": data_points,
@@ -409,13 +455,14 @@ def query_memory_metrics(
                 "max": max_value,
                 "min": min_value,
                 "p95": round(sorted(values)[int(len(values) * 0.95)] if len(values) > 1 else max_value, 2),
-                "memory_pressure": memory_pressure
+                "memory_pressure": memory_pressure,
             },
             "alert_info": {
                 "triggered": memory_pressure,
                 "threshold": 70.0,
-                "message": "内存使用率超过 70% 阈值，存在内存压力" if memory_pressure else "内存使用率正常"
-            }
+                "message": "内存使用率超过 70% 阈值，存在内存压力" if memory_pressure else "内存使用率正常",
+                "suggestions": _ALERT_SUGGESTIONS["memory"],
+            },
         }
     else:
         return {
@@ -428,6 +475,86 @@ def query_memory_metrics(
         }
 
 
+
+
+@mcp.tool()
+@log_tool_call
+def query_disk_metrics(
+    service_name: str,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    interval: str = "5m"
+) -> Dict[str, Any]:
+    """查询服务的磁盘使用率监控数据。
+
+    Args:
+        service_name: 服务名称（必填）
+        start_time: 开始时间（可选），格式 "YYYY-MM-DD HH:MM:SS"
+        end_time: 结束时间（可选），格式 "YYYY-MM-DD HH:MM:SS"
+        interval: 数据聚合间隔，默认 "5m"
+
+    Returns:
+        Dict: 磁盘监控数据，含 data_points、statistics、alert_info
+    """
+    start_dt = parse_time_or_default(start_time, default_offset_hours=-1)
+    end_dt = parse_time_or_default(end_time, default_offset_hours=0)
+
+    interval_minutes = 5
+    if interval.endswith('m'):
+        interval_minutes = int(interval[:-1])
+    elif interval.endswith('h'):
+        interval_minutes = int(interval[:-1]) * 60
+
+    data_points = []
+    current_time = start_dt
+    time_index = 0
+    base_disk = 55.0
+    total_gb = 100.0
+
+    while current_time <= end_dt:
+        if time_index < 2:
+            disk_value = base_disk + (time_index * 2.0)
+        else:
+            growth = (time_index - 1) * 4.0
+            disk_value = min(base_disk + growth, 92.0)
+
+        disk_value = round(disk_value + random.uniform(-1.5, 1.5), 1)
+        disk_value = max(0, min(100, disk_value))
+        used_gb = round((disk_value / 100.0) * total_gb, 1)
+
+        data_points.append({
+            "timestamp": current_time.strftime("%H:%M"),
+            "value": disk_value,
+            "used_gb": used_gb,
+            "total_gb": total_gb,
+        })
+        current_time += timedelta(minutes=interval_minutes)
+        time_index += 1
+
+    if data_points:
+        values = [d["value"] for d in data_points]
+        avg_value = round(sum(values) / len(values), 2)
+        max_value = max(values)
+        disk_pressure = max_value > 85.0
+        return {
+            "service_name": service_name,
+            "host_ip": _get_host_ip(),
+            "hostname": socket.gethostname(),
+            "metric_name": "disk_usage_percent",
+            "interval": interval,
+            "data_points": data_points,
+            "statistics": {"avg": avg_value, "max": max_value, "min": min(values),
+                           "p95": round(sorted(values)[int(len(values) * 0.95)] if len(values) > 1 else max_value, 2),
+                           "disk_pressure": disk_pressure},
+            "alert_info": {
+                "triggered": disk_pressure,
+                "threshold": 85.0,
+                "message": "磁盘使用率超过 85% 阈值" if disk_pressure else "磁盘使用率正常",
+                "suggestions": _ALERT_SUGGESTIONS["disk"],
+            },
+        }
+    return {"service_name": service_name, "metric_name": "disk_usage_percent",
+            "interval": interval, "data_points": [], "statistics": {}}
 
 
 if __name__ == "__main__":
