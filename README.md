@@ -20,6 +20,14 @@
 |---|---|---|---|
 | ![首页](static/imgs/homepage.png) | ![高德地图](static/imgs/amap-mcp.png) | ![CLS](static/imgs/cls-mcp.png) | ![AIOps](static/imgs/aiops-diagnosis.png) |
 
+#### 飞书集成
+
+| 告警推送到飞书群 | 告警推送到飞书群 | 飞书告警面板 |
+|---|---|---|
+| ![飞书告警推送](static/imgs/3b586ed2ef6624b10f26e8e60915056a.jpg) | ![飞书告警推送](static/imgs/aeca0e4840de0097997387881057994d.jpg) | ![飞书告警面板](static/imgs/68e4ae34b530bf51f10b8d93c81264fe.png) |
+
+> 告警信息实时推送到飞书群，飞书告警面板支持查看告警监控数据，也可以直接发送消息到飞书群。
+
 ## 技术选型 & 踩过的坑
 
 | 层 | 选型 | 为什么 |
